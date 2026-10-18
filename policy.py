@@ -42,7 +42,7 @@ AGE_US = (0, 0, 150000, 600000)   # a head job ready this long goes first (no st
 MARGIN = 150          # doorbell + context switch + slack (µs)
 FRAME_GAP = 500       # pushes further apart than this start a new frame (µs)
 JITTER = 500          # a predicted frame may arrive this late (µs)
-IDLE_FRAC = 0.05      # holds may idle the ring at most this fraction of the time
+IDLE_FRAC = 0.08      # holds may idle the ring at most this fraction of the time
 IDLE_CAP = 20000      # ... banked up to this much (µs)
 
 

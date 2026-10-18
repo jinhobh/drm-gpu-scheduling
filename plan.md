@@ -44,7 +44,7 @@ Captures so far: `traces/gonogo/20261018-031904` (GL only, vkmark crashed),
 **Machine facts (checked 2026-10-18):**
 - Ryzen AI 7 350 / Radeon 860M (GC 11.5.2, MES present), 512 MiB carveout, Hyprland 0.56 (Wayland),
   Mesa 26.2.5.
-- Kernel **7.2.11-arch1-1** (README still says 7.0). `gpu_sched` is a module.
+- Kernel **7.2.11-arch1-1**. `gpu_sched` is a module.
   `sched_policy`: 0 = RR, 1 = FIFO (current), **2 = upstream "Fair (experimental)"**, so our
   policy will be `sched_policy=3`.
 - `amdgpu.user_queue=-1` (auto), but no client uses user queues: all rendering goes through

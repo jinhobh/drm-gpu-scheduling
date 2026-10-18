@@ -24,7 +24,9 @@
   since idle.  An entity is a hog if its current or previous frame exceeded
   HOG_BURST, or it keeps more than HOG_QUEUE jobs queued, unless it still has more
   than CREDIT_MIN of sleeper credit (it has used well under its fair share lately,
-  e.g. a freshly launched app); a backlogged hog sits at min_vr and never does.
+  e.g. a freshly launched app) and its last idle period lasted at least SLEEP_MIN:
+  a hog that only lags because its jobs were deferred, or that sleeps briefly
+  between jobs, does not qualify.
 * Compositor protection: the HIGH (DRM master) entity's fence deadlines reveal the
   vblank grid (period = smallest gap between deadlines), how long before vblank it
   submits, and its cost; its next frame is due by the next vblank, or before its
@@ -65,6 +67,7 @@ HOLD_MAX = 2000       # longest the ring may idle waiting for an urgent arrival 
 HOG_BURST = 3000      # GPU time per frame beyond which an entity is a hog (µs)
 HOG_QUEUE = 4         # ... or more jobs than this queued
 CREDIT_MIN = 20000    # ... unless it still has this much sleeper credit left (µs)
+SLEEP_MIN = 2000      # ... and really slept (idle this long) before its current burst
 AGE_US = (0, 0, 150000, 600000)   # a head job ready this long goes first (no starvation)
 MARGIN = 300          # latch pad + doorbell + context switch (µs)
 FRAME_GAP = 500       # pushes further apart than this start a new frame (µs)
@@ -101,11 +104,13 @@ class Policy(PolicyBase):
         e.ps.last_f = 0         # ... during the previous frame
         e.ps.fcost = 0.0        # EWMA of GPU time per frame
         e.ps.fk = 1             # frame interval in vblank periods
+        e.ps.slept = True       # its last idle period was at least SLEEP_MIN
 
     def job_push(self, e, j):
         now = self.sched.now
         if e.idle_since_us is not None:
             e.ps.vr = max(e.ps.vr, self.min_vr - (CREDIT << SHIFT[e.priority]))
+            e.ps.slept = now - e.idle_since_us >= SLEEP_MIN
         if e.ps.last_push is None or now - e.ps.last_push > FRAME_GAP:
             if e.ps.frame_t is not None:
                 e.ps.fcost = ewma(e.ps.fcost, e.ps.fsum)
@@ -137,7 +142,7 @@ class Policy(PolicyBase):
             self.comp_cost = ewma(self.comp_cost, j.gpu_us)
 
     def _is_hog(self, e):
-        if self.min_vr - e.ps.vr > CREDIT_MIN << SHIFT[e.priority]:
+        if e.ps.slept and self.min_vr - e.ps.vr > CREDIT_MIN << SHIFT[e.priority]:
             return False
         return max(e.ps.fsum, e.ps.last_f) > HOG_BURST or len(e.queue) > HOG_QUEUE
 

@@ -77,7 +77,11 @@ class Policy(PolicyBase):
 
     def select(self):
         best = None
+        busy = any(j.ring == self.sched.name and self.sched.lookup(j.ring, j.entity_id) is not None
+                   and self.sched.lookup(j.ring, j.entity_id).priority >= 2 for j in self.sched.hw_jobs)
         for e in self.sched.entities:
+            if busy and e.priority >= 2:
+                continue
             if e.ready and e.ps.in_tree:
                 if best is None or (e.ps.vr, e.id) < (best.ps.vr, best.id):
                     best = e

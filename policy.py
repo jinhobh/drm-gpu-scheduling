@@ -21,13 +21,15 @@
   HOG_BURST, or it keeps more than HOG_QUEUE jobs queued.
 * Compositor protection: the HIGH (DRM master) entity's fence deadlines reveal the
   vblank grid (period = smallest gap between deadlines), how long before vblank it
-  submits, and its cost.  A job of a NORMAL/LOW hog whose estimated cost (EWMA of its entity's job times) would run past the compositor's
-  latest start for the next vblank is held back if the compositor is due within
-  HOLD_MAX; otherwise it runs.
-* Interactive frames get the same protection: an entity that is not a hog starts a
-  frame once per vblank during a burst, so its next frame is predicted one period
-  after the current one started (EWMA frame cost), and must finish before the
-  compositor latches it (vblank grid minus the compositor's lead).
+  submits, and its cost; its next frame is due by the next vblank, or before its
+  next wake-up if it is too heavy to make the vblank.
+* Interactive frames: an entity that is not a hog starts a frame once per vblank
+  during a burst, so its next frame is predicted one period after the current one
+  started (EWMA frame cost), and must finish before the compositor latches it
+  (vblank grid minus the compositor's lead).
+* Holds: a hog's job (cost = EWMA of its job times) is held back if running it first
+  would make the predicted urgent frames infeasible (EDF walk in arrival order) while
+  they are feasible without it, and the first of them is due within HOLD_MAX.
 * Starvation guard: a NORMAL/LOW head job ready for longer than AGE_US goes first
   among NORMAL/LOW and is never held.
 * Holds draw on an idle budget that refills at IDLE_FRAC of wall time, so work
@@ -113,19 +115,20 @@ class Policy(PolicyBase):
         return max(e.ps.fsum, e.ps.last_f) > HOG_BURST or len(e.queue) > HOG_QUEUE
 
     def _urgent(self, now):
-        """(arrival, latest start) of frames predicted to arrive soon: the compositor's
-        next frame, and the next frame of each interactive entity in a burst (one
-        frame per vblank), which must finish before the compositor latches it."""
+        """(arrival, cost, deadline) of frames predicted to arrive soon, by arrival: the
+        compositor's next frame, and the next frame of each interactive entity in a
+        burst (one frame per vblank), which must finish before the compositor latches it."""
         out = []
         p = self.period
         if p is None:
             return out
         v = self.vblank + p
         a = v - self.comp_lead
+        c = self.comp_cost + MARGIN
         if a > now:
-            if a + self.comp_cost + MARGIN > v:
+            if a + c > v:
                 v += p - self.comp_lead     # can't make this vblank: due before next wake
-            out.append((a, v - self.comp_cost - MARGIN))
+            out.append((a, c, v))
         base = self.vblank - self.comp_lead - MARGIN
         for e in self.sched.entities:
             if e.priority < PRIO_NORMAL or e.queue or e.ps.frame_t is None or self._is_hog(e):
@@ -135,9 +138,18 @@ class Policy(PolicyBase):
                 continue
             a = max(a, now)
             done = a + e.ps.fcost
-            latch = base + -(-(done - base) // p) * p
-            out.append((a, latch - e.ps.fcost))
+            out.append((a, e.ps.fcost + MARGIN, base + -(-(done - base) // p) * p))
+        out.sort()
         return out
+
+    @staticmethod
+    def _feasible(t, urgent):
+        """Do the urgent frames all meet their deadlines if the ring is free from t?"""
+        for a, c, d in urgent:
+            t = max(t, a) + c
+            if t > d:
+                return False
+        return True
 
     def select(self):
         s = self.sched
@@ -168,12 +180,10 @@ class Policy(PolicyBase):
                 if not aged and hog:
                     if s.credits_used:
                         continue
-                    t = None
-                    for a, ls in urgent:
-                        if a - now <= HOLD_MAX and now + e.ps.avg > ls:
-                            t = a if t is None else min(t, a)
-                    if t is not None:
-                        held = t if held is None else min(held, t)
+                    if (urgent and urgent[0][0] - now <= HOLD_MAX
+                            and not self._feasible(now + e.ps.avg, urgent)
+                            and self._feasible(now, urgent)):
+                        held = urgent[0][0]
                         continue
             key = (min(e.priority, PRIO_NORMAL), not aged, e.ps.vr, e.id)
             if best_key is None or key < best_key:

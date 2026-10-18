@@ -12,9 +12,10 @@
   frame never waits behind two non-preemptible hog jobs.
 * Compositor protection: the HIGH (DRM master) entity's fence deadlines reveal the
   vblank grid (period = smallest gap between deadlines), how long before vblank it
-  submits, and its cost.  A NORMAL/LOW job whose estimated cost (EWMA of its entity's
-  job times) would run past the compositor's latest start for the next vblank is held
-  back if the compositor is due within HOLD_MAX; otherwise it runs.
+  submits, and its cost.  A job of a NORMAL/LOW entity without sleeper credit whose
+  estimated cost (EWMA of its entity's job times) would run past the compositor's
+  latest start for the next vblank is held back if the compositor is due within
+  HOLD_MAX; otherwise it runs.
 
 Kernel mapping: vr/min_vr are drm_sched_entity / drm_sched_rq fields; idle detection
 is the entity queue becoming empty with no job in flight; gpu_time comes from the
@@ -97,7 +98,8 @@ class Policy(PolicyBase):
             if e.priority >= PRIO_NORMAL:
                 if normal_busy:
                     continue
-                if win is not None and win[0] - now <= HOLD_MAX and now + e.ps.avg > win[1]:
+                if (win is not None and e.ps.vr >= self.min_vr and win[0] - now <= HOLD_MAX
+                        and now + e.ps.avg > win[1]):
                     held = win[0]
                     continue
             key = (min(e.priority, PRIO_NORMAL), e.ps.vr, e.id)

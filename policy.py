@@ -40,7 +40,8 @@
 * Holds: a hog's job (cost = EWMA of its job times plus K_DEV mean absolute
   deviations: overrunning an urgent frame costs more than a slightly longer hold) is
   held back if running it first
-  would make the predicted urgent frames infeasible (EDF walk in arrival order) while
+  would make the predicted urgent frames infeasible (one backward pass over them in
+  arrival order gives the latest time the ring may become free) while
   they are feasible without it, and the first of them is due within HOLD_MAX (or a
   quarter of the job's length, for long jobs).  If the
   arrival is further out, a conflicting hog job shorter than a vblank period is only
@@ -181,13 +182,17 @@ class Policy(PolicyBase):
         return base + -(-(t - base) // p) * p
 
     @staticmethod
-    def _feasible(t, urgent):
-        """Do the urgent frames all meet their deadlines if the ring is free from t?"""
-        for a, c, d, _ in urgent:
-            t = max(t, a) + c
-            if t > d:
-                return False
-        return True
+    def _latest_free(urgent):
+        """Latest time the ring may become free with all urgent frames (run in arrival
+        order) still meeting their deadlines, or None if they cannot all make it anyway.
+        One backward pass: each frame must start by min(own deadline, next frame's
+        latest start) - own cost, and cannot start before it arrives."""
+        t = None
+        for a, c, d, _ in reversed(urgent):
+            t = (d if t is None else min(d, t)) - c
+            if a > t:
+                return None
+        return t
 
     def select(self):
         s = self.sched
@@ -204,6 +209,7 @@ class Policy(PolicyBase):
         self.last_t = now
         self.budget = min(IDLE_CAP, self.budget + dt * IDLE_FRAC - (dt if self.holding else 0))
         urgent = self._urgent(now) if s.name == "gfx" else ()
+        free_by = self._latest_free(urgent) if urgent else None
         best = None
         best_key = None
         held = None
@@ -220,8 +226,7 @@ class Policy(PolicyBase):
                     if s.credits_used:
                         continue
                     est = e.ps.avg + K_DEV * e.ps.dev
-                    if (urgent and not self._feasible(now + est, urgent)
-                            and self._feasible(now, urgent)):
+                    if free_by is not None and now <= free_by < now + est:
                         if self.budget > 0 and urgent[0][0] - now <= max(HOLD_MAX, e.ps.avg / 4):
                             held = urgent[0][0]
                             continue

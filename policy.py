@@ -10,6 +10,8 @@
   up to CREDIT µs of GPU time it did not use while asleep (GENTLE_FAIR_SLEEPERS).
   Short-burst clients therefore jump ahead of hogs for a whole frame, while a hog
   that sleeps briefly between jobs only earns as much credit as it slept.
+* Within NORMAL/LOW, entities that are not hogs go before hogs (vruntime orders each
+  group); hogs cannot starve thanks to the starvation guard below.
 * HW queue depth: at most one NORMAL/LOW entity on the ring at a time (a non-hog may
   queue its own next job behind its running one), and a hog only starts on an empty
   ring, so an urgent frame never waits behind two non-preemptible jobs.
@@ -181,7 +183,7 @@ class Policy(PolicyBase):
             if not e.ready:
                 continue
             aged = now - e.head.ready_us > AGE_US[e.priority]
-            defer = False
+            defer = hog = False
             if e.priority >= PRIO_NORMAL:
                 hog = self._is_hog(e)
                 if normal_busy is not None and (hog or normal_busy != e.id):
@@ -195,10 +197,10 @@ class Policy(PolicyBase):
                             held = urgent[0][0]
                             continue
                         defer = e.ps.avg < self.period
-            key = (min(e.priority, PRIO_NORMAL), not aged, defer, e.ps.vr, e.id)
+            key = (min(e.priority, PRIO_NORMAL), not aged, hog, defer, e.ps.vr, e.id)
             if best_key is None or key < best_key:
                 best, best_key = e, key
-        if best is not None and best_key[2] and held is not None:
+        if best is not None and best_key[3] and held is not None:
             best = None
         self.holding = best is None and held is not None
         if self.holding:

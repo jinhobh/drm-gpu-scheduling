@@ -19,10 +19,12 @@
   queue its own next job behind its running one), and a hog only starts on an empty
   ring, so an urgent frame never waits behind two non-preemptible jobs.
 * Hogs: BORE's burst time is CPU time between sleeps; the GPU analogue used here is
-  the GPU time an entity received between its own frame submissions (pushes more
-  than FRAME_GAP apart), i.e. while its client was not back on the CPU producing the
-  next frame.  It does not grow when the scheduler starves a client, unlike time
-  since idle.  An entity is a hog if its current or previous frame exceeded
+  the GPU time of one frame (the jobs an entity pushes together, more than
+  FRAME_GAP after its previous push), i.e. how long the GPU works for each time the
+  client comes back from the CPU.  Unlike time since idle, it does not grow when
+  the scheduler starves a client and its frames pile up (a small ring of per-frame
+  job counts attributes completions to frames).  An entity is a hog if its oldest
+  unfinished or last finished frame exceeded
   HOG_BURST, or it keeps more than HOG_QUEUE jobs queued, unless it still has more
   than CREDIT_MIN of sleeper credit (it has used well under its fair share lately,
   e.g. a freshly launched app) and its last idle period lasted at least SLEEP_MIN:
@@ -68,13 +70,14 @@ SHIFT = (1, 2, 4, 7)
 CREDIT = 100000       # µs of unused GPU time an idle entity may bank
 LONG = 50000          # a job of length L is charged L * (1 + L / LONG) of vruntime
 HOLD_MAX = 2000       # longest the ring may idle waiting for an urgent arrival (µs)
-HOG_BURST = 3000      # GPU time per frame beyond which an entity is a hog (µs)
+HOG_BURST = 5000      # GPU time per frame beyond which an entity is a hog (µs)
 HOG_QUEUE = 4         # ... or more jobs than this queued
 CREDIT_MIN = 10000    # ... unless it still has this much sleeper credit left (µs)
 SLEEP_MIN = 2000      # ... and really slept (idle this long) before its current burst
 AGE_US = (0, 0, 150000, 600000)   # a head job ready this long goes first (no starvation)
 MARGIN = 300          # latch pad + doorbell + context switch (µs)
 FRAME_GAP = 500       # pushes further apart than this start a new frame (µs)
+FQ_LEN = 8            # unfinished frames tracked per entity
 K_DEV = 0.5           # hog job estimate = avg + K_DEV * mean absolute deviation
 JITTER = 800          # a predicted frame may arrive this late (µs)
 ROLL = 3              # keep predicting compositor frames this many vblanks after the last
@@ -104,8 +107,9 @@ class Policy(PolicyBase):
         e.ps.dev = 0.0          # EWMA of |job time - avg|
         e.ps.last_push = None
         e.ps.frame_t = None     # when the entity's current frame started
-        e.ps.fsum = 0           # GPU time received since the current frame started
-        e.ps.last_f = 0         # ... during the previous frame
+        e.ps.fq = []            # jobs per submitted, unfinished frame (ring of <= FQ_LEN)
+        e.ps.fsum = 0           # GPU time of the oldest unfinished frame so far
+        e.ps.last_f = 0         # GPU time of the last finished frame
         e.ps.fcost = 0.0        # EWMA of GPU time per frame
         e.ps.fk = 1             # frame interval in vblank periods
         e.ps.slept = True       # its last idle period was at least SLEEP_MIN
@@ -120,15 +124,14 @@ class Policy(PolicyBase):
         elif e.ps.last_push is not None and now - e.ps.last_push > FRAME_GAP:
             e.ps.first = False
         if e.ps.last_push is None or now - e.ps.last_push > FRAME_GAP:
-            if e.ps.frame_t is not None:
-                e.ps.fcost = ewma(e.ps.fcost, e.ps.fsum)
-                if self.period:
-                    k = round((now - e.ps.frame_t) / self.period)
-                    if k <= 4:
-                        e.ps.fk = max(1, k)
-            e.ps.last_f = e.ps.fsum
-            e.ps.fsum = 0
+            if e.ps.frame_t is not None and self.period:
+                k = round((now - e.ps.frame_t) / self.period)
+                if k <= 4:
+                    e.ps.fk = max(1, k)
             e.ps.frame_t = now
+            if len(e.ps.fq) < FQ_LEN:
+                e.ps.fq.append(0)
+        e.ps.fq[-1] += 1
         e.ps.last_push = now
 
     def fence_deadline(self, e, j, t):
@@ -146,6 +149,12 @@ class Policy(PolicyBase):
         e.ps.dev = ewma(e.ps.dev, abs(j.gpu_us - e.ps.avg)) if e.ps.avg else 0.0
         e.ps.avg = ewma(e.ps.avg, j.gpu_us)
         e.ps.fsum += j.gpu_us
+        e.ps.fq[0] -= 1
+        if not e.ps.fq[0]:              # the oldest frame just finished
+            e.ps.fq.pop(0)
+            e.ps.last_f = e.ps.fsum
+            e.ps.fcost = ewma(e.ps.fcost, e.ps.fsum)
+            e.ps.fsum = 0
         if e.priority == PRIO_HIGH and j.deadline_us is not None:
             self.comp_cost = ewma(self.comp_cost, j.gpu_us)
 

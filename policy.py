@@ -16,6 +16,10 @@
   since it was last idle, or in its previous burst: BORE's burst time) whose estimated cost (EWMA of its entity's job times) would run past the compositor's
   latest start for the next vblank is held back if the compositor is due within
   HOLD_MAX; otherwise it runs.
+* Interactive frames get the same protection: an entity that is not a hog starts a
+  frame once per vblank during a burst, so its next frame is predicted one period
+  after the current one started (EWMA frame cost), and must finish before the
+  compositor latches it (vblank grid minus the compositor's lead).
 * Starvation guard: a NORMAL/LOW head job ready for longer than AGE_US goes first
   among NORMAL/LOW and is never held.
 
@@ -29,10 +33,12 @@ from gpusim.api import PRIO_HIGH, PRIO_NORMAL, PolicyBase
 
 SHIFT = (1, 2, 4, 7)
 CREDIT = 16000        # µs of unused GPU time an idle entity may bank
-HOLD_MAX = 2000       # longest the ring may idle waiting for the compositor (µs)
+HOLD_MAX = 2000       # longest the ring may idle waiting for an urgent arrival (µs)
 HOG_BURST = 4000      # GPU time since last idle beyond which an entity is a hog (µs)
 AGE_US = (0, 0, 150000, 600000)   # a head job ready this long goes first (no starvation)
 MARGIN = 150          # doorbell + context switch + slack (µs)
+FRAME_GAP = 500       # pushes further apart than this start a new frame (µs)
+JITTER = 500          # a predicted frame may arrive this late (µs)
 
 
 def ewma(avg, x):
@@ -53,10 +59,21 @@ class Policy(PolicyBase):
         e.ps.avg = 0.0
         e.ps.burst = 0
         e.ps.last_burst = 0
+        e.ps.last_push = None
+        e.ps.frame_t = None     # when the entity's current frame started
+        e.ps.fsum = 0
+        e.ps.fcost = 0.0        # EWMA of GPU time per frame
 
     def job_push(self, e, j):
+        now = self.sched.now
         if e.idle_since_us is not None:
             e.ps.vr = max(e.ps.vr, self.min_vr - (CREDIT << SHIFT[e.priority]))
+        if e.ps.last_push is None or now - e.ps.last_push > FRAME_GAP:
+            if e.ps.frame_t is not None:
+                e.ps.fcost = ewma(e.ps.fcost, e.ps.fsum)
+            e.ps.fsum = 0
+            e.ps.frame_t = now
+        e.ps.last_push = now
 
     def fence_deadline(self, e, j, t):
         if e.priority != PRIO_HIGH:
@@ -72,6 +89,7 @@ class Policy(PolicyBase):
         e.ps.vr += j.gpu_us << SHIFT[e.priority]
         e.ps.avg = ewma(e.ps.avg, j.gpu_us)
         e.ps.burst += j.gpu_us
+        e.ps.fsum += j.gpu_us
         if e.priority == PRIO_HIGH and j.deadline_us is not None:
             self.comp_cost = ewma(self.comp_cost, j.gpu_us)
 
@@ -79,14 +97,32 @@ class Policy(PolicyBase):
         e.ps.last_burst = e.ps.burst
         e.ps.burst = 0
 
-    def _comp_window(self, now):
-        """(arrival, latest start) of the compositor's next frame, or None."""
-        if self.period is None:
-            return None
-        v = self.vblank + self.period
-        if v - self.comp_lead <= now:
-            return None
-        return v - self.comp_lead, v - self.comp_cost - MARGIN
+    def _is_hog(self, e):
+        return max(e.ps.burst, e.ps.last_burst) > HOG_BURST
+
+    def _urgent(self, now):
+        """(arrival, latest start) of frames predicted to arrive soon: the compositor's
+        next frame, and the next frame of each interactive entity in a burst (one
+        frame per vblank), which must finish before the compositor latches it."""
+        out = []
+        p = self.period
+        if p is None:
+            return out
+        v = self.vblank + p
+        if v - self.comp_lead > now:
+            out.append((v - self.comp_lead, v - self.comp_cost - MARGIN))
+        base = self.vblank - self.comp_lead - MARGIN
+        for e in self.sched.entities:
+            if e.priority < PRIO_NORMAL or e.queue or e.ps.frame_t is None or self._is_hog(e):
+                continue
+            a = e.ps.frame_t + p
+            if a < now - JITTER:
+                continue
+            a = max(a, now)
+            done = a + e.ps.fcost
+            latch = base + -(-(done - base) // p) * p
+            out.append((a, latch - e.ps.fcost))
+        return out
 
     def select(self):
         s = self.sched
@@ -99,7 +135,7 @@ class Policy(PolicyBase):
             o = s.lookup(j.ring, j.entity_id)
             if o is not None and o.priority >= PRIO_NORMAL:
                 normal_busy = True
-        win = self._comp_window(now) if s.name == "gfx" else None
+        urgent = self._urgent(now) if s.name == "gfx" else ()
         best = None
         best_key = None
         held = None
@@ -110,13 +146,17 @@ class Policy(PolicyBase):
             if e.priority >= PRIO_NORMAL:
                 if normal_busy:
                     continue
-                if (win is not None and not aged and max(e.ps.burst, e.ps.last_burst) > HOG_BURST
-                        and win[0] - now <= HOLD_MAX and now + e.ps.avg > win[1]):
-                    held = win[0]
-                    continue
+                if not aged and self._is_hog(e):
+                    t = None
+                    for a, ls in urgent:
+                        if a - now <= HOLD_MAX and now + e.ps.avg > ls:
+                            t = a if t is None else min(t, a)
+                    if t is not None:
+                        held = t if held is None else min(held, t)
+                        continue
             key = (min(e.priority, PRIO_NORMAL), not aged, e.ps.vr, e.id)
             if best_key is None or key < best_key:
                 best, best_key = e, key
         if best is None and held is not None:
-            s.request_wakeup(held)
+            s.request_wakeup(max(held, now + 100))
         return best

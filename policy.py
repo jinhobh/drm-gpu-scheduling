@@ -12,8 +12,8 @@
   frame never waits behind two non-preemptible hog jobs.
 * Compositor protection: the HIGH (DRM master) entity's fence deadlines reveal the
   vblank grid (period = smallest gap between deadlines), how long before vblank it
-  submits, and its cost.  A job of a NORMAL/LOW entity without sleeper credit whose
-  estimated cost (EWMA of its entity's job times) would run past the compositor's
+  submits, and its cost.  A job of a NORMAL/LOW hog (more than HOG_BURST of GPU time
+  since it was last idle, BORE's burst time) whose estimated cost (EWMA of its entity's job times) would run past the compositor's
   latest start for the next vblank is held back if the compositor is due within
   HOLD_MAX; otherwise it runs.
 
@@ -28,6 +28,7 @@ from gpusim.api import PRIO_HIGH, PRIO_NORMAL, PolicyBase
 SHIFT = (1, 2, 4, 7)
 CREDIT = 16000        # µs of unused GPU time an idle entity may bank
 HOLD_MAX = 2000       # longest the ring may idle waiting for the compositor (µs)
+HOG_BURST = 4000      # GPU time since last idle beyond which an entity is a hog (µs)
 MARGIN = 150          # doorbell + context switch + slack (µs)
 
 
@@ -47,6 +48,7 @@ class Policy(PolicyBase):
     def entity_init(self, e):
         e.ps.vr = self.min_vr
         e.ps.avg = 0.0
+        e.ps.burst = 0
 
     def job_push(self, e, j):
         if e.idle_since_us is not None:
@@ -65,8 +67,12 @@ class Policy(PolicyBase):
     def job_done(self, e, j):
         e.ps.vr += j.gpu_us << SHIFT[e.priority]
         e.ps.avg = ewma(e.ps.avg, j.gpu_us)
+        e.ps.burst += j.gpu_us
         if e.priority == PRIO_HIGH and j.deadline_us is not None:
             self.comp_cost = ewma(self.comp_cost, j.gpu_us)
+
+    def entity_idle(self, e):
+        e.ps.burst = 0
 
     def _comp_window(self, now):
         """(arrival, latest start) of the compositor's next frame, or None."""
@@ -98,7 +104,7 @@ class Policy(PolicyBase):
             if e.priority >= PRIO_NORMAL:
                 if normal_busy:
                     continue
-                if (win is not None and e.ps.vr >= self.min_vr and win[0] - now <= HOLD_MAX
+                if (win is not None and e.ps.burst > HOG_BURST and win[0] - now <= HOLD_MAX
                         and now + e.ps.avg > win[1]):
                     held = win[0]
                     continue

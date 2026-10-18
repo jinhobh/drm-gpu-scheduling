@@ -47,29 +47,70 @@ Update the **Status** and **Next** sections whenever a step finishes.
 
 ## Next
 
-**Phase 0, step 0.1:** check that the tracepoints exist and record a first trace.
-Then work down the checklist below in order.
+**Phase 0, step 0.2b: re-run the go/no-go with Vulkan.** The first run covered only
+OpenGL clients: no Vulkan driver is installed (`vulkan-radeon` missing, so vkmark failed with
+`ErrorIncompatibleDriver` and mpv fell back to GL). RADV may submit differently (user queues),
+so the user:
+```
+sudo pacman -S vulkan-radeon
+sudo trace/capture.sh gonogo -- trace/workloads/gonogo.sh
+```
+then the agent runs `python3 trace/gonogo.py traces/gonogo/<latest>` and checks that vkmark
+appears with drm_sched jobs, records the result under 0.2. Then 0.4.
 
 ---
 
 ## Phase 0: setup and go/no-go checks (stock kernel)
 
 - [x] 0.0 Install the tools (done by the user).
-- [ ] 0.1 List the available events and record their exact 7.2 names in this file:
-  `sudo trace-cmd list -e | grep -E 'gpu_scheduler|amdgpu|dma_fence|drm'`.
-  Expected (verify): `gpu_scheduler:drm_sched_job_queue/_run/_done/_add_dep/_unschedulable`,
-  `amdgpu:amdgpu_cs_ioctl`, `amdgpu:amdgpu_sched_run_job`, `amdgpu:amdgpu_bo_move`,
-  `dma_fence:*`, `drm:drm_vblank_event`.
-- [ ] 0.2 **Go/no-go: does gfx work go through drm_sched?** Trace ~5 s while Hyprland animates,
-  mpv plays, and vkmark runs. Every one of them must show up in `drm_sched_job_queue/run`
-  (map entities to processes with `amdgpu_cs_ioctl` and the pid/comm fields). If a client is
-  missing, it is on user queues. Record which clients use which path. On the stock kernel this
-  is a finding in itself; the test kernel (phase 3) will set `amdgpu.user_queue=0`.
-- [ ] 0.3 Check whether Hyprland's context is HIGH priority (ctx priority in the trace or
-  fdinfo), and whether its fences, and client fences, carry deadlines (`dma_fence_set_deadline`
-  via a bpftrace kprobe if there is no tracepoint). The policy reads the compositor and vblank
-  grid from these. If either is missing, note what fallback the policy needs (e.g. identify the
-  DRM master directly).
+- [x] 0.1 Tracepoints and structs, read from the module binaries and `/sys/kernel/btf` (no root):
+  - `gpu_scheduler`: `drm_sched_job_queue`, `drm_sched_job_run` (format: `dev, fence=ctx:seqno,
+    ring, job count, hw job count, client_id`), `drm_sched_job_done` (`fence=ctx:seqno signaled`),
+    `drm_sched_job_add_dep`, `drm_sched_job_unschedulable`. `fence` is the *finished* fence;
+    `client_id` = fdinfo `drm-client-id`.
+  - `amdgpu`: `amdgpu_cs_ioctl`, `amdgpu_sched_run_job` (`timeline, fence, ring_name, num_ibs`),
+    `amdgpu_bo_move`, `amdgpu_vm_flush`, `amdgpu_ib_pipe_sync`, plus DC/DM events.
+  - No drm_sched tracepoint carries the priority or deadline, so `trace/bpf/ids.bt` kprobes
+    `drm_sched_entity_push_job` (pid, comm, `entity->priority`/`rq_priority`, `drm_client_id`)
+    and `drm_sched_fence_set_deadline_finished` / `dma_fence_set_deadline`.
+  - **7.2's drm_sched already has upstream's fair rework**: `drm_sched_entity` has `stats`
+    (`runtime`, `vruntime`, `avg_job_us` EWMA), `rq_priority`, `rb_tree_node`,
+    `oldest_job_waiting`; `drm_sched_rq` is an rb-tree with `head_prio`; `drm_sched_fence` has
+    `deadline` and `drm_client_id`. The phase 3 port builds on this, not on the 7.0 design.
+  - Capture tooling: `trace/capture.sh` (root; trace-cmd `-C mono` + bpftrace + fdinfo sampler,
+    runs the workload as the user in the Hyprland session), `trace/clients.py`, `trace/bpf/ids.bt`,
+    `trace/workloads/gonogo.sh`, `trace/gonogo.py`. Output in `traces/` (gitignored).
+  - Hyprland's main DRM client already shows both `drm-engine-gfx` and `drm-engine-compute`
+    time in fdinfo: it uses the compute ring too.
+- [~] 0.2 **Go/no-go: does gfx work go through drm_sched?** Run `traces/gonogo/20261018-031904`
+  (stock kernel, FIFO, `user_queue=-1`, both displays on):
+  - **GO for OpenGL (radeonsi):** every GPU-busy client (Hyprland, mpv, ghostty, kitty, qs)
+    appears in `drm_sched_job_queue/run/done`, with 0 doorbells in fdinfo. User queues are not
+    used for GL on this kernel. 11 098 jobs in ~15 s.
+  - **Vulkan not yet tested:** `vulkan-radeon` is not installed (see Next).
+  - Rings seen: `gfx_0.0.0` (all client rendering), `comp_1.x.y` (a few compute jobs from mpv,
+    ghostty, kitty, Hyprland), `sdma0` (amdgpu kernel jobs).
+  - amdgpu kernel jobs carry negative `client_id`s (u64 −1, −2, −3, −4, −8, −10) and are
+    submitted in the client's context; mpv's software-decoded video caused ~4 000 sdma jobs with
+    id −3 (likely VM updates for per-frame uploads). Treat them as their own class in the parser.
+  - First look at waits (queue→run): mpv gfx jobs p50 0.37 ms, p99 4.2 ms, max 5.3 ms, with
+    only Hyprland, mpv and terminals running. Includes dependency waits (6 283 `add_dep`, 3 171
+    `unschedulable` events), so the parser must split dep wait from scheduling wait.
+  - Hyprland gfx jobs: 754 in ~15 s, run→done p50 1.6 ms, max 4.9 ms (two displays, one at
+    2560x1440). The sim's compositor (`base_us=700` + 250/surface) is probably too cheap.
+  - Script bugs found and fixed: the fdinfo sampler ignored SIGINT (background job), so the
+    capture hung and files stayed root-owned (now SIGTERM, `set +e` in cleanup). bpftrace
+    `nsecs` is CLOCK_BOOTTIME (≈ 9 900 s ahead of mono after suspends), now `nsecs(monotonic)`.
+- [x] 0.3 Compositor priority and deadlines (same run):
+  - Hyprland's gfx context is **HIGH** (755 pushes prio 1/rq_prio 1); it also has 28 NORMAL and
+    50 KERNEL-priority pushes (kernel jobs and a second context).
+  - **Fence deadlines are set only on Hyprland's fences** (754 `drm_sched_fence_set_deadline_finished`,
+    all client 6, from `kworker/u64:*`, i.e. the atomic-commit worker). Client fences never get
+    deadlines, so `client_deadline_hints=False` in the sim is the right default. Deadline
+    values are CLOCK_MONOTONIC ns.
+  - The policy's assumptions hold on this machine: HIGH entity = compositor, vblank grid
+    from its deadlines. But with two displays the deadlines interleave two grids
+    (`drm_vblank_event` crtc 1: 940 events; crtc 0: 14, eDP likely in panel self-refresh).
 - [ ] 0.4 Check that `pp_dpm_sclk` / `power_dpm_force_performance_level` can be pinned to
   `high` and restored to `auto` (root), and that `gpu_metrics` can be sampled at ≥ 1 kHz.
 
@@ -151,5 +192,8 @@ input → client CPU → CS ioctl → [dep wait] → [sched wait: queued, not ye
 - Hyprland may not run at HIGH priority or set fence deadlines (step 0.3).
 - DPM ramp-up may dominate burst latency; if so, that is a result too, and the policy may need
   to account for it.
+- **Two displays** are connected: eDP-1 1920x1200 @ 60 Hz and DP-1 2560x1440 @ 75 Hz, i.e. two
+  vblank grids. The policy predicts a single compositor grid. Run experiments on one display
+  (disable DP-1) unless testing multi-monitor on purpose, and record the setup in `meta.txt`.
 - Hyprland's own animations are compositor (HIGH) work, so they are not NORMAL bursts; client-side
   animations (GTK, Firefox, burst_client) are the NORMAL-burst case.

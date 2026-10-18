@@ -1,0 +1,32 @@
+// Who submits each drm_sched job, at what priority, and which fences get deadlines.
+// Timestamps are CLOCK_MONOTONIC ns, the same clock as `trace-cmd record -C mono` and fence
+// deadlines (plain `nsecs` is CLOCK_BOOTTIME here, which includes time spent suspended).
+// drm_sched_priority: 0 KERNEL, 1 HIGH, 2 NORMAL, 3 LOW.
+//
+// push   T pid sched_fence_ctx:seqno prio rq_prio client_id credits comm
+//        (the finished fence ctx:seqno is what gpu_scheduler tracepoints print as fence=)
+// sdl    T pid sched_fence_ctx:seqno deadline comm   deadline reached a drm_sched fence
+// dl     T pid fence_ctx:seqno deadline comm         any dma_fence_set_deadline call
+// comm is last because it may contain spaces ("Web Content").
+
+kprobe:drm_sched_entity_push_job
+{
+    $j = (struct drm_sched_job *)arg0;
+    $f = $j->s_fence;
+    $e = $j->entity;
+    printf("push %llu %d %llu:%llu %d %d %llu %u %s\n", nsecs(monotonic), pid,
+           $f->finished.context, $f->finished.seqno, $e->priority, $e->rq_priority,
+           $f->drm_client_id, $j->credits, comm);
+}
+
+kprobe:drm_sched_fence_set_deadline_finished
+{
+    $f = (struct dma_fence *)arg0;
+    printf("sdl %llu %d %llu:%llu %lld %s\n", nsecs(monotonic), pid, $f->context, $f->seqno, arg1, comm);
+}
+
+kprobe:dma_fence_set_deadline
+{
+    $f = (struct dma_fence *)arg0;
+    printf("dl %llu %d %llu:%llu %lld %s\n", nsecs(monotonic), pid, $f->context, $f->seqno, arg1, comm);
+}

@@ -69,7 +69,7 @@ FRAME_GAP = 500       # pushes further apart than this start a new frame (µs)
 K_DEV = 0.5           # hog job estimate = avg + K_DEV * mean absolute deviation
 JITTER = 500          # a predicted frame may arrive this late (µs)
 IDLE_FRAC = 0.10      # holds may idle the ring at most this fraction of the time
-IDLE_CAP = 20000      # ... banked up to this much (µs)
+IDLE_CAP = 250000     # ... banked up to this much, so bursts can use idle saved earlier (µs)
 
 
 def ewma(avg, x):

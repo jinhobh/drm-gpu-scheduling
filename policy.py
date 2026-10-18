@@ -49,7 +49,7 @@ compositor's atomic commits set on its fences (dma_fence_set_deadline).
 from gpusim.api import PRIO_HIGH, PRIO_NORMAL, PolicyBase
 
 SHIFT = (1, 2, 4, 7)
-CREDIT = 50000        # µs of unused GPU time an idle entity may bank
+CREDIT = 100000       # µs of unused GPU time an idle entity may bank
 LONG = 50000          # a job of length L is charged L * (1 + L / LONG) of vruntime
 HOLD_MAX = 2000       # longest the ring may idle waiting for an urgent arrival (µs)
 HOG_BURST = 3000      # GPU time per frame beyond which an entity is a hog (µs)

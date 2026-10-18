@@ -16,6 +16,8 @@
   since it was last idle, or in its previous burst: BORE's burst time) whose estimated cost (EWMA of its entity's job times) would run past the compositor's
   latest start for the next vblank is held back if the compositor is due within
   HOLD_MAX; otherwise it runs.
+* Starvation guard: a NORMAL/LOW head job ready for longer than AGE_US goes first
+  among NORMAL/LOW and is never held.
 
 Kernel mapping: vr/min_vr are drm_sched_entity / drm_sched_rq fields; idle detection
 is the entity queue becoming empty with no job in flight; gpu_time comes from the
@@ -29,6 +31,7 @@ SHIFT = (1, 2, 4, 7)
 CREDIT = 16000        # µs of unused GPU time an idle entity may bank
 HOLD_MAX = 2000       # longest the ring may idle waiting for the compositor (µs)
 HOG_BURST = 4000      # GPU time since last idle beyond which an entity is a hog (µs)
+AGE_US = (0, 0, 150000, 600000)   # a head job ready this long goes first (no starvation)
 MARGIN = 150          # doorbell + context switch + slack (µs)
 
 
@@ -103,14 +106,15 @@ class Policy(PolicyBase):
         for e in active:
             if not e.ready:
                 continue
+            aged = now - e.head.ready_us > AGE_US[e.priority]
             if e.priority >= PRIO_NORMAL:
                 if normal_busy:
                     continue
-                if (win is not None and max(e.ps.burst, e.ps.last_burst) > HOG_BURST and win[0] - now <= HOLD_MAX
-                        and now + e.ps.avg > win[1]):
+                if (win is not None and not aged and max(e.ps.burst, e.ps.last_burst) > HOG_BURST
+                        and win[0] - now <= HOLD_MAX and now + e.ps.avg > win[1]):
                     held = win[0]
                     continue
-            key = (min(e.priority, PRIO_NORMAL), e.ps.vr, e.id)
+            key = (min(e.priority, PRIO_NORMAL), not aged, e.ps.vr, e.id)
             if best_key is None or key < best_key:
                 best, best_key = e, key
         if best is None and held is not None:

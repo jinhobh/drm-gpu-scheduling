@@ -35,28 +35,30 @@
   up to ROLL vblanks after its last frame.
 * Interactive frames: an entity that is not a hog starts a frame every k vblanks
   during a burst (k from its last frame interval), so its next frame is predicted k
-  periods after the current one started (EWMA frame cost), and must finish before the compositor latches it
-  (vblank grid minus the compositor's lead).
-* Holds: a hog's job (cost = EWMA of its job times plus K_DEV mean absolute
+  periods after the current one started (EWMA frame cost), and must finish before
+  the compositor latches it (vblank grid minus the compositor's lead).
+* Holds: one backward pass over the predicted urgent frames (arrival order) gives
+  the latest time the ring may become free with all of them still on time.  A hog
+  job that would run past it (cost = EWMA of its job times plus K_DEV mean absolute
   deviations: overrunning an urgent frame costs more than a slightly longer hold) is
-  held back if running it first
-  would make the predicted urgent frames infeasible (one backward pass over them in
-  arrival order gives the latest time the ring may become free) while
-  they are feasible without it, and the first of them is due within HOLD_MAX (or a
-  quarter of the job's length, for long jobs).  If the
-  arrival is further out, a conflicting hog job shorter than a vblank period is only
-  deferred: any other ready job goes first (no idling).  Longer jobs can never fit
-  between compositor frames and keep their fair turn, unless a client's animation
-  is running: then they are deferred too and catch up (lowest vruntime) after it.
+  held back if the first urgent frame is due within HOLD_MAX (or a quarter of the
+  job's length, for long jobs).  If it is due later, a conflicting hog job shorter
+  than a vblank period is only deferred: any other ready job goes first (no
+  idling).  Longer jobs can never fit between compositor frames and keep their fair
+  turn, unless a client's animation is running: then they are deferred too and
+  catch up (lowest vruntime) after it.  Nothing is held when the urgent frames
+  cannot make it anyway.
 * Starvation guard: a NORMAL/LOW head job ready for longer than AGE_US goes first
   among NORMAL/LOW and is never held.
-* Holds draw on an idle budget that refills at IDLE_FRAC of wall time, so work
-  conservation is bounded whatever the workload.
+* Work conservation: holds draw on an idle budget that refills at IDLE_FRAC of wall
+  time (banked up to IDLE_CAP), so holding is bounded whatever the workload.
 
 Kernel mapping: vr/min_vr are drm_sched_entity / drm_sched_rq fields; idle detection
 is the entity queue becoming empty with no job in flight; gpu_time comes from the
 scheduled/finished fence timestamps; the vblank grid comes from the deadlines the
-compositor's atomic commits set on its fences (dma_fence_set_deadline).
+compositor's atomic commits set on its fences (dma_fence_set_deadline).  Per-entity
+state is a handful of counters and EWMAs; each decision is O(#entities) plus a sort
+of the (one per animating entity) predicted frames; all arithmetic maps to integers.
 """
 
 from gpusim.api import PRIO_HIGH, PRIO_NORMAL, PolicyBase

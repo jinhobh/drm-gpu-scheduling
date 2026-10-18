@@ -11,10 +11,15 @@
 * HW queue depth: at most one NORMAL/LOW job on the ring at a time, and a hog only
   starts on an empty ring, so an urgent frame never waits behind two
   non-preemptible jobs one of which is a hog's.
+* Hogs: BORE's burst time is CPU time between sleeps; the GPU analogue used here is
+  the GPU time an entity received between its own frame submissions (pushes more
+  than FRAME_GAP apart), i.e. while its client was not back on the CPU producing the
+  next frame.  It does not grow when the scheduler starves a client, unlike time
+  since idle.  An entity is a hog if its current or previous frame exceeded
+  HOG_BURST, or it keeps more than HOG_QUEUE jobs queued.
 * Compositor protection: the HIGH (DRM master) entity's fence deadlines reveal the
   vblank grid (period = smallest gap between deadlines), how long before vblank it
-  submits, and its cost.  A job of a NORMAL/LOW hog (more than HOG_BURST of GPU time
-  since it was last idle, or in its previous burst: BORE's burst time) whose estimated cost (EWMA of its entity's job times) would run past the compositor's
+  submits, and its cost.  A job of a NORMAL/LOW hog whose estimated cost (EWMA of its entity's job times) would run past the compositor's
   latest start for the next vblank is held back if the compositor is due within
   HOLD_MAX; otherwise it runs.
 * Interactive frames get the same protection: an entity that is not a hog starts a
@@ -37,7 +42,8 @@ from gpusim.api import PRIO_HIGH, PRIO_NORMAL, PolicyBase
 SHIFT = (1, 2, 4, 7)
 CREDIT = 16000        # µs of unused GPU time an idle entity may bank
 HOLD_MAX = 2000       # longest the ring may idle waiting for an urgent arrival (µs)
-HOG_BURST = 4000      # GPU time since last idle beyond which an entity is a hog (µs)
+HOG_BURST = 4000      # GPU time per frame beyond which an entity is a hog (µs)
+HOG_QUEUE = 4         # ... or more jobs than this queued
 AGE_US = (0, 0, 150000, 600000)   # a head job ready this long goes first (no starvation)
 MARGIN = 150          # doorbell + context switch + slack (µs)
 FRAME_GAP = 500       # pushes further apart than this start a new frame (µs)
@@ -65,11 +71,10 @@ class Policy(PolicyBase):
     def entity_init(self, e):
         e.ps.vr = self.min_vr
         e.ps.avg = 0.0
-        e.ps.burst = 0
-        e.ps.last_burst = 0
         e.ps.last_push = None
         e.ps.frame_t = None     # when the entity's current frame started
-        e.ps.fsum = 0
+        e.ps.fsum = 0           # GPU time received since the current frame started
+        e.ps.last_f = 0         # ... during the previous frame
         e.ps.fcost = 0.0        # EWMA of GPU time per frame
 
     def job_push(self, e, j):
@@ -79,6 +84,7 @@ class Policy(PolicyBase):
         if e.ps.last_push is None or now - e.ps.last_push > FRAME_GAP:
             if e.ps.frame_t is not None:
                 e.ps.fcost = ewma(e.ps.fcost, e.ps.fsum)
+            e.ps.last_f = e.ps.fsum
             e.ps.fsum = 0
             e.ps.frame_t = now
         e.ps.last_push = now
@@ -96,17 +102,12 @@ class Policy(PolicyBase):
     def job_done(self, e, j):
         e.ps.vr += j.gpu_us << SHIFT[e.priority]
         e.ps.avg = ewma(e.ps.avg, j.gpu_us)
-        e.ps.burst += j.gpu_us
         e.ps.fsum += j.gpu_us
         if e.priority == PRIO_HIGH and j.deadline_us is not None:
             self.comp_cost = ewma(self.comp_cost, j.gpu_us)
 
-    def entity_idle(self, e):
-        e.ps.last_burst = e.ps.burst
-        e.ps.burst = 0
-
     def _is_hog(self, e):
-        return max(e.ps.burst, e.ps.last_burst) > HOG_BURST
+        return max(e.ps.fsum, e.ps.last_f) > HOG_BURST or len(e.queue) > HOG_QUEUE
 
     def _urgent(self, now):
         """(arrival, latest start) of frames predicted to arrive soon: the compositor's

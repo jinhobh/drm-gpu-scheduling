@@ -1,7 +1,9 @@
 """Fair drm_sched policy with bounded sleeper credit (BORE/CFS-style interactivity).
 
 * KERNEL and HIGH entities are strictly ahead; NORMAL/LOW share by virtual GPU time:
-  vruntime += gpu_time << shift[prio]  (shifts KERNEL=1, HIGH=2, NORMAL=4, LOW=7).
+  vruntime += cost << shift[prio]  (shifts KERNEL=1, HIGH=2, NORMAL=4, LOW=7), where
+  cost = gpu_time * (1 + gpu_time / LONG): a long non-preemptible job also costs
+  everyone else head-of-line latency, so it is charged a little extra.
 * min_vr is a monotonic clock (cfs_rq->min_vruntime): the smallest vruntime among
   entities that have work queued or in flight.
 * An entity waking from idle is placed at max(vr, min_vr - CREDIT << shift): it keeps
@@ -41,6 +43,7 @@ from gpusim.api import PRIO_HIGH, PRIO_NORMAL, PolicyBase
 
 SHIFT = (1, 2, 4, 7)
 CREDIT = 50000        # µs of unused GPU time an idle entity may bank
+LONG = 50000          # a job of length L is charged L * (1 + L / LONG) of vruntime
 HOLD_MAX = 2000       # longest the ring may idle waiting for an urgent arrival (µs)
 HOG_BURST = 4000      # GPU time per frame beyond which an entity is a hog (µs)
 HOG_QUEUE = 4         # ... or more jobs than this queued
@@ -100,7 +103,7 @@ class Policy(PolicyBase):
             self.comp_lead = ewma(self.comp_lead, t - self.sched.now)
 
     def job_done(self, e, j):
-        e.ps.vr += j.gpu_us << SHIFT[e.priority]
+        e.ps.vr += (j.gpu_us + j.gpu_us * j.gpu_us // LONG) << SHIFT[e.priority]
         e.ps.avg = ewma(e.ps.avg, j.gpu_us)
         e.ps.fsum += j.gpu_us
         if e.priority == PRIO_HIGH and j.deadline_us is not None:

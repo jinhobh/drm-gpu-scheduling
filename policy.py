@@ -33,7 +33,8 @@
   (vblank grid minus the compositor's lead).
 * Holds: a hog's job (cost = EWMA of its job times) is held back if running it first
   would make the predicted urgent frames infeasible (EDF walk in arrival order) while
-  they are feasible without it, and the first of them is due within HOLD_MAX.  If the
+  they are feasible without it, and the first of them is due within HOLD_MAX (or a
+  quarter of the job's length, for long jobs).  If the
   arrival is further out, a conflicting hog job shorter than a vblank period is only
   deferred: any other ready job goes first (no idling).  Longer jobs can never fit
   between compositor frames and keep their fair turn, unless a client's animation
@@ -200,7 +201,7 @@ class Policy(PolicyBase):
                         continue
                     if (urgent and not self._feasible(now + e.ps.avg, urgent)
                             and self._feasible(now, urgent)):
-                        if self.budget > 0 and urgent[0][0] - now <= HOLD_MAX:
+                        if self.budget > 0 and urgent[0][0] - now <= max(HOLD_MAX, e.ps.avg / 4):
                             held = urgent[0][0]
                             continue
                         defer = e.ps.avg < self.period or any(u[3] for u in urgent)

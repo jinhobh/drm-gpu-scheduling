@@ -47,16 +47,17 @@ Update the **Status** and **Next** sections whenever a step finishes.
 
 ## Next
 
-**Phase 0, step 0.2b: re-run the go/no-go with Vulkan.** The first run covered only
-OpenGL clients: no Vulkan driver is installed (`vulkan-radeon` missing, so vkmark failed with
-`ErrorIncompatibleDriver` and mpv fell back to GL). RADV may submit differently (user queues),
-so the user:
+**Phase 0, step 0.4 (user, root):** check that DPM can be pinned and restored:
 ```
-sudo pacman -S vulkan-radeon
-sudo trace/capture.sh gonogo -- trace/workloads/gonogo.sh
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/dpm.sh high
+python3 trace/gpu_metrics.py | head -20      # gfxclk should read ~3000
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/dpm.sh auto
 ```
-then the agent runs `python3 trace/gonogo.py traces/gonogo/<latest>` and checks that vkmark
-appears with drm_sched jobs, records the result under 0.2. Then 0.4.
+Then **phase 1, step 1.2:** `trace/parse.py` (the per-job / per-frame breakdown), developed
+against the two gonogo traces.
+
+Note for the user: run root commands with absolute paths (or from the repo directory);
+relative paths fail from other directories.
 
 ---
 
@@ -82,12 +83,20 @@ appears with drm_sched jobs, records the result under 0.2. Then 0.4.
     `trace/workloads/gonogo.sh`, `trace/gonogo.py`. Output in `traces/` (gitignored).
   - Hyprland's main DRM client already shows both `drm-engine-gfx` and `drm-engine-compute`
     time in fdinfo: it uses the compute ring too.
-- [~] 0.2 **Go/no-go: does gfx work go through drm_sched?** Run `traces/gonogo/20261018-031904`
-  (stock kernel, FIFO, `user_queue=-1`, both displays on):
+- [x] 0.2 **Go/no-go: does gfx work go through drm_sched? GO for both GL and Vulkan.**
+  - **Vulkan (RADV)** run `traces/gonogo/20261018-032454` (after `pacman -S vulkan-radeon`):
+    vkmark (347 452 jobs) and mpv (Vulkan now, submits from its `vo` thread) all go through
+    drm_sched, 0 doorbells. No user queues on this kernel/Mesa with `user_queue=-1`.
+  - `vkmark -b cube` is **not a GPU-time hog**: ~29 000 FPS, 0.03–0.05 ms jobs. It floods
+    the queue with tiny jobs, and others barely waited (mpv/vo p99 1.7 ms, Hyprland p99
+    0.05 ms). Phase 1 needs heavy scenes (vkmark/glmark2 heavier scenes at full screen,
+    supertuxkart) and the job-flood case as a separate scenario.
+  - Parsing `trace-cmd report` text takes ~10 s for a 27 MB / 15 s trace. OK for now.
+  - GL run `traces/gonogo/20261018-031904` (stock kernel, FIFO, `user_queue=-1`, both displays on):
   - **GO for OpenGL (radeonsi):** every GPU-busy client (Hyprland, mpv, ghostty, kitty, qs)
     appears in `drm_sched_job_queue/run/done`, with 0 doorbells in fdinfo. User queues are not
     used for GL on this kernel. 11 098 jobs in ~15 s.
-  - **Vulkan not yet tested:** `vulkan-radeon` is not installed (see Next).
+  - (Vulkan was not tested in this run: `vulkan-radeon` was missing, vkmark crashed, mpv fell back to GL.)
   - Rings seen: `gfx_0.0.0` (all client rendering), `comp_1.x.y` (a few compute jobs from mpv,
     ghostty, kitty, Hyprland), `sdma0` (amdgpu kernel jobs).
   - amdgpu kernel jobs carry negative `client_id`s (u64 −1, −2, −3, −4, −8, −10) and are
@@ -111,8 +120,17 @@ appears with drm_sched jobs, records the result under 0.2. Then 0.4.
   - The policy's assumptions hold on this machine: HIGH entity = compositor, vblank grid
     from its deadlines. But with two displays the deadlines interleave two grids
     (`drm_vblank_event` crtc 1: 940 events; crtc 0: 14, eDP likely in panel self-refresh).
-- [ ] 0.4 Check that `pp_dpm_sclk` / `power_dpm_force_performance_level` can be pinned to
-  `high` and restored to `auto` (root), and that `gpu_metrics` can be sampled at ≥ 1 kHz.
+- [~] 0.4 DPM and clock sampling.
+  - `gpu_metrics` is format **v3.0**: it has only *averaged* clocks (`average_gfxclk_frequency`,
+    no instantaneous gfxclk) and the SMU refreshes it every **~6 ms** (≈165 Hz), so ≥ 1 kHz is
+    not possible. `trace/gpu_metrics.py` logs every refresh (gfxclk, socclk, fclk, uclk, gfx
+    activity, gfx power) and `capture.sh` now records it as `gpu_metrics.csv`. Its
+    `system_clock_counter` is CLOCK_BOOTTIME ns; rows also carry a CLOCK_MONOTONIC stamp.
+  - Consequence: measure clock ramp-up by its *effect*: run a fixed calibration job from
+    `burst_client` after idle vs warm, with DPM `auto` vs pinned `high` (the exec time
+    difference is the ramp cost). gpu_metrics is supporting evidence only.
+  - Idle: sclk sits at level 1 (≈ 670–790 MHz), gfxclk average ≈ 650–690 MHz.
+  - `trace/dpm.sh [auto|high|...]` shows / sets the level. Pin and restore not yet tested (root).
 
 ## Phase 1: attribution study (main deliverable)
 

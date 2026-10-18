@@ -7,6 +7,7 @@
 #   trace.dat     trace-cmd record, CLOCK_MONOTONIC timestamps (-C mono)
 #   bpf.txt       per-job pid/comm/priority and fence deadlines (trace/bpf/ids.bt)
 #   clients.jsonl DRM clients from /proc/*/fdinfo, sampled every 0.5 s
+#   gpu_metrics.csv  clocks / activity / power at every SMU table refresh (~6 ms)
 #   meta.txt      kernel, module parameters, DPM state, monitors
 #   workload.log  the workload's stdout/stderr
 # The workload runs as $SUDO_USER inside the Hyprland session. If SECONDS is given it is
@@ -37,7 +38,7 @@ as_user() {
         PATH="/usr/local/bin:/usr/bin:/bin" HOME="$(getent passwd "$SUDO_USER" | cut -d: -f6)" "$@"
 }
 
-card=$(ls -d /sys/class/drm/card*/device | head -1)
+card=$(ls -d /sys/class/drm/card[0-9]/device | head -1)
 {
     echo "date: $(date -Is)"
     echo "kernel: $(uname -r)"
@@ -63,15 +64,15 @@ events=(
     -e dma_fence:dma_fence_emit -e dma_fence:dma_fence_signaled
 )
 
-# Background jobs of a non-interactive shell ignore SIGINT, so the fdinfo sampler gets
-# SIGTERM; trace-cmd and bpftrace install their own SIGINT handlers and flush on it.
+# Background jobs of a non-interactive shell ignore SIGINT, so the samplers get SIGTERM;
+# trace-cmd and bpftrace install their own SIGINT handlers and flush on it.
 pids=()
-sampler=""
+samplers=()
 cleanup() {
     set +e
-    [[ -n $sampler ]] && kill -TERM "$sampler" 2>/dev/null
+    for p in "${samplers[@]}"; do kill -TERM "$p" 2>/dev/null; done
     for p in "${pids[@]}"; do kill -INT "$p" 2>/dev/null; done
-    wait "${pids[@]}" $sampler 2>/dev/null
+    wait "${pids[@]}" "${samplers[@]}" 2>/dev/null
     chown -R "$SUDO_USER": "$repo/traces"
 }
 trap cleanup EXIT
@@ -81,7 +82,9 @@ pids+=($!)
 bpftrace "$repo/trace/bpf/ids.bt" > "$out/bpf.txt" 2> "$out/bpf.err" &
 pids+=($!)
 python3 "$repo/trace/clients.py" --every 0.5 > "$out/clients.jsonl" &
-sampler=$!
+samplers+=($!)
+python3 "$repo/trace/gpu_metrics.py" --card "${card%/device}" > "$out/gpu_metrics.csv" &
+samplers+=($!)
 sleep 2   # let trace-cmd and bpftrace attach
 
 marker=/sys/kernel/tracing/trace_marker

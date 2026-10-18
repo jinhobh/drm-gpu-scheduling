@@ -10,8 +10,10 @@
   up to CREDIT µs of GPU time it did not use while asleep (GENTLE_FAIR_SLEEPERS).
   Short-burst clients therefore jump ahead of hogs for a whole frame, while a hog
   that sleeps briefly between jobs only earns as much credit as it slept.
-* Within NORMAL/LOW, entities that are not hogs go before hogs (vruntime orders each
-  group); hogs cannot starve thanks to the starvation guard below.
+* Within NORMAL/LOW, entities that are not hogs go before hogs; hogs cannot starve
+  thanks to the starvation guard below.  Hogs are ordered by vruntime, non-hogs
+  earliest deadline first: the compositor latch after the later of the head frame's
+  ideal finish and now + its queued work, then least queued work.
 * HW queue depth: at most one NORMAL/LOW entity on the ring at a time (a non-hog may
   queue its own next job behind its running one), and a hog only starts on an empty
   ring, so an urgent frame never waits behind two non-preemptible jobs.
@@ -140,7 +142,6 @@ class Policy(PolicyBase):
             if a + c > v:
                 v += p - self.comp_lead     # can't make this vblank: due before next wake
             out.append((a, c, v, False))
-        base = self.vblank - self.comp_lead - MARGIN
         for e in self.sched.entities:
             if e.priority < PRIO_NORMAL or e.queue or e.ps.frame_t is None or self._is_hog(e):
                 continue
@@ -148,10 +149,15 @@ class Policy(PolicyBase):
             if a < now - JITTER:
                 continue
             a = max(a, now)
-            done = a + e.ps.fcost
-            out.append((a, e.ps.fcost + MARGIN, base + -(-(done - base) // p) * p, True))
+            out.append((a, e.ps.fcost + MARGIN, self._latch(a + e.ps.fcost), True))
         out.sort()
         return out
+
+    def _latch(self, t):
+        """First time at or after t the compositor latches client buffers."""
+        p = self.period
+        base = self.vblank - self.comp_lead - MARGIN
+        return base + -(-(t - base) // p) * p
 
     @staticmethod
     def _feasible(t, urgent):
@@ -198,7 +204,11 @@ class Policy(PolicyBase):
                             held = urgent[0][0]
                             continue
                         defer = e.ps.avg < self.period or any(u[3] for u in urgent)
-            key = (min(e.priority, PRIO_NORMAL), not aged, hog, defer, e.ps.vr, e.id)
+            dl = work = 0
+            if not hog and e.priority >= PRIO_NORMAL and self.period:
+                work = len(e.queue) * e.ps.avg
+                dl = self._latch(max(e.head.submit_us + e.ps.fcost, now + work))
+            key = (min(e.priority, PRIO_NORMAL), not aged, hog, defer, dl, work, e.ps.vr, e.id)
             if best_key is None or key < best_key:
                 best, best_key = e, key
         if best is not None and best_key[3] and held is not None:

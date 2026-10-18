@@ -34,7 +34,8 @@
   they are feasible without it, and the first of them is due within HOLD_MAX.  If the
   arrival is further out, a conflicting hog job shorter than a vblank period is only
   deferred: any other ready job goes first (no idling).  Longer jobs can never fit
-  between frames and keep their fair turn.
+  between compositor frames and keep their fair turn, unless a client's animation
+  is running: then they are deferred too and catch up (lowest vruntime) after it.
 * Starvation guard: a NORMAL/LOW head job ready for longer than AGE_US goes first
   among NORMAL/LOW and is never held.
 * Holds draw on an idle budget that refills at IDLE_FRAC of wall time, so work
@@ -138,7 +139,7 @@ class Policy(PolicyBase):
         if a > now:
             if a + c > v:
                 v += p - self.comp_lead     # can't make this vblank: due before next wake
-            out.append((a, c, v))
+            out.append((a, c, v, False))
         base = self.vblank - self.comp_lead - MARGIN
         for e in self.sched.entities:
             if e.priority < PRIO_NORMAL or e.queue or e.ps.frame_t is None or self._is_hog(e):
@@ -148,14 +149,14 @@ class Policy(PolicyBase):
                 continue
             a = max(a, now)
             done = a + e.ps.fcost
-            out.append((a, e.ps.fcost + MARGIN, base + -(-(done - base) // p) * p))
+            out.append((a, e.ps.fcost + MARGIN, base + -(-(done - base) // p) * p, True))
         out.sort()
         return out
 
     @staticmethod
     def _feasible(t, urgent):
         """Do the urgent frames all meet their deadlines if the ring is free from t?"""
-        for a, c, d in urgent:
+        for a, c, d, _ in urgent:
             t = max(t, a) + c
             if t > d:
                 return False
@@ -196,7 +197,7 @@ class Policy(PolicyBase):
                         if self.budget > 0 and urgent[0][0] - now <= HOLD_MAX:
                             held = urgent[0][0]
                             continue
-                        defer = e.ps.avg < self.period
+                        defer = e.ps.avg < self.period or any(u[3] for u in urgent)
             key = (min(e.priority, PRIO_NORMAL), not aged, hog, defer, e.ps.vr, e.id)
             if best_key is None or key < best_key:
                 best, best_key = e, key

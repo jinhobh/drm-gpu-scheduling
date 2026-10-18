@@ -23,6 +23,8 @@
   compositor latches it (vblank grid minus the compositor's lead).
 * Starvation guard: a NORMAL/LOW head job ready for longer than AGE_US goes first
   among NORMAL/LOW and is never held.
+* Holds draw on an idle budget that refills at IDLE_FRAC of wall time, so work
+  conservation is bounded whatever the workload.
 
 Kernel mapping: vr/min_vr are drm_sched_entity / drm_sched_rq fields; idle detection
 is the entity queue becoming empty with no job in flight; gpu_time comes from the
@@ -40,6 +42,8 @@ AGE_US = (0, 0, 150000, 600000)   # a head job ready this long goes first (no st
 MARGIN = 150          # doorbell + context switch + slack (µs)
 FRAME_GAP = 500       # pushes further apart than this start a new frame (µs)
 JITTER = 500          # a predicted frame may arrive this late (µs)
+IDLE_FRAC = 0.05      # holds may idle the ring at most this fraction of the time
+IDLE_CAP = 20000      # ... banked up to this much (µs)
 
 
 def ewma(avg, x):
@@ -54,6 +58,9 @@ class Policy(PolicyBase):
         self.period = None
         self.comp_lead = 0.0    # compositor submits this long before its deadline
         self.comp_cost = 0.0
+        self.budget = 0.0       # hold budget (µs of idle ring time)
+        self.last_t = 0
+        self.holding = False
 
     def entity_init(self, e):
         e.ps.vr = self.min_vr
@@ -136,7 +143,10 @@ class Policy(PolicyBase):
             o = s.lookup(j.ring, j.entity_id)
             if o is not None and o.priority >= PRIO_NORMAL:
                 normal_busy = True
-        urgent = self._urgent(now) if s.name == "gfx" else ()
+        dt = now - self.last_t
+        self.last_t = now
+        self.budget = min(IDLE_CAP, self.budget + dt * IDLE_FRAC - (dt if self.holding else 0))
+        urgent = self._urgent(now) if s.name == "gfx" and self.budget > 0 else ()
         best = None
         best_key = None
         held = None
@@ -160,6 +170,7 @@ class Policy(PolicyBase):
             key = (min(e.priority, PRIO_NORMAL), not aged, e.ps.vr, e.id)
             if best_key is None or key < best_key:
                 best, best_key = e, key
-        if best is None and held is not None:
+        self.holding = best is None and held is not None
+        if self.holding:
             s.request_wakeup(max(held, now + 100))
         return best

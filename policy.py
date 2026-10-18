@@ -33,7 +33,9 @@
   during a burst (k from its last frame interval), so its next frame is predicted k
   periods after the current one started (EWMA frame cost), and must finish before the compositor latches it
   (vblank grid minus the compositor's lead).
-* Holds: a hog's job (cost = EWMA of its job times) is held back if running it first
+* Holds: a hog's job (cost = EWMA of its job times plus K_DEV mean absolute
+  deviations: overrunning an urgent frame costs more than a slightly longer hold) is
+  held back if running it first
   would make the predicted urgent frames infeasible (EDF walk in arrival order) while
   they are feasible without it, and the first of them is due within HOLD_MAX (or a
   quarter of the job's length, for long jobs).  If the
@@ -64,6 +66,7 @@ CREDIT_MIN = 20000    # ... unless it still has this much sleeper credit left (�
 AGE_US = (0, 0, 150000, 600000)   # a head job ready this long goes first (no starvation)
 MARGIN = 300          # latch pad + doorbell + context switch (µs)
 FRAME_GAP = 500       # pushes further apart than this start a new frame (µs)
+K_DEV = 1.0           # hog job estimate = avg + K_DEV * mean absolute deviation
 JITTER = 500          # a predicted frame may arrive this late (µs)
 IDLE_FRAC = 0.10      # holds may idle the ring at most this fraction of the time
 IDLE_CAP = 20000      # ... banked up to this much (µs)
@@ -88,6 +91,7 @@ class Policy(PolicyBase):
     def entity_init(self, e):
         e.ps.vr = self.min_vr
         e.ps.avg = 0.0
+        e.ps.dev = 0.0          # EWMA of |job time - avg|
         e.ps.last_push = None
         e.ps.frame_t = None     # when the entity's current frame started
         e.ps.fsum = 0           # GPU time received since the current frame started
@@ -123,6 +127,7 @@ class Policy(PolicyBase):
 
     def job_done(self, e, j):
         e.ps.vr += (j.gpu_us + j.gpu_us * j.gpu_us // LONG) << SHIFT[e.priority]
+        e.ps.dev = ewma(e.ps.dev, abs(j.gpu_us - e.ps.avg)) if e.ps.avg else 0.0
         e.ps.avg = ewma(e.ps.avg, j.gpu_us)
         e.ps.fsum += j.gpu_us
         if e.priority == PRIO_HIGH and j.deadline_us is not None:
@@ -204,7 +209,8 @@ class Policy(PolicyBase):
                 if not aged and hog:
                     if s.credits_used:
                         continue
-                    if (urgent and not self._feasible(now + e.ps.avg, urgent)
+                    est = e.ps.avg + K_DEV * e.ps.dev
+                    if (urgent and not self._feasible(now + est, urgent)
                             and self._feasible(now, urgent)):
                         if self.budget > 0 and urgent[0][0] - now <= max(HOLD_MAX, e.ps.avg / 4):
                             held = urgent[0][0]

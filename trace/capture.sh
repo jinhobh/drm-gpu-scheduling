@@ -85,7 +85,13 @@ python3 "$repo/trace/clients.py" --every 0.5 > "$out/clients.jsonl" &
 samplers+=($!)
 python3 "$repo/trace/gpu_metrics.py" --card "${card%/device}" > "$out/gpu_metrics.csv" &
 samplers+=($!)
-sleep 2   # let trace-cmd and bpftrace attach
+# bpftrace needs ~3 s to load BTF and attach; start the workload only once it has
+for _ in $(seq 150); do
+    grep -q Attached "$out/bpf.err" 2>/dev/null && break
+    sleep 0.1
+done
+grep -q Attached "$out/bpf.err" || echo "capture: warning: bpftrace not attached after 15 s" >&2
+sleep 0.5
 
 marker=/sys/kernel/tracing/trace_marker
 echo "capture: workload_start" > "$marker"

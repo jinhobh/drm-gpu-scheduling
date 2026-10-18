@@ -47,17 +47,19 @@ Update the **Status** and **Next** sections whenever a step finishes.
 
 ## Next
 
-**Phase 0, step 0.4 (user, root):** check that DPM can be pinned and restored:
-```
-sudo /home/jinho/Projects/drm-gpu-scheduling/trace/dpm.sh high
-python3 trace/gpu_metrics.py | head -20      # gfxclk should read ~3000
-sudo /home/jinho/Projects/drm-gpu-scheduling/trace/dpm.sh auto
-```
-Then **phase 1, step 1.2:** `trace/parse.py` (the per-job / per-frame breakdown), developed
-against the two gonogo traces.
-
-Note for the user: run root commands with absolute paths (or from the repo directory);
-relative paths fail from other directories.
+**Phase 1, step 1.3: `trace/burst_client`**, the ground-truth burst source. Plain C,
+Vulkan + Wayland (xdg-shell, presentation-time); gcc, glslc, wayland-scanner and the
+protocol XMLs are installed (no meson/ninja: use a Makefile). Requirements:
+- idle for a configurable time, then a burst of N frames at the display rate (FIFO present),
+  each frame a fragment-shader loop with a tunable GPU cost (calibrated in µs at fixed clock);
+  repeat; optional "first frame heavier" multiplier (like an app intro).
+- log per frame, CLOCK_MONOTONIC: burst/frame index, intended start, vkQueueSubmit time,
+  GPU timestamps (vkCmdWriteTimestamp at start/end → exec time and the actual HW start),
+  `wp_presentation_feedback` presented time + refresh + flags (or discarded).
+- a calibration mode that reports the exec time of the same frame after k ms idle vs warm
+  (the DPM / GFXOFF ramp measurement for 0.4).
+Then 1.2b: join burst_client's per-frame log with `jobs.csv` (match by pid + submit time)
+to get the per-frame breakdown.
 
 ---
 
@@ -120,7 +122,7 @@ relative paths fail from other directories.
   - The policy's assumptions hold on this machine: HIGH entity = compositor, vblank grid
     from its deadlines. But with two displays the deadlines interleave two grids
     (`drm_vblank_event` crtc 1: 940 events; crtc 0: 14, eDP likely in panel self-refresh).
-- [~] 0.4 DPM and clock sampling.
+- [x] 0.4 DPM and clock sampling.
   - `gpu_metrics` is format **v3.0**: it has only *averaged* clocks (`average_gfxclk_frequency`,
     no instantaneous gfxclk) and the SMU refreshes it every **~6 ms** (≈165 Hz), so ≥ 1 kHz is
     not possible. `trace/gpu_metrics.py` logs every refresh (gfxclk, socclk, fclk, uclk, gfx
@@ -130,7 +132,12 @@ relative paths fail from other directories.
     `burst_client` after idle vs warm, with DPM `auto` vs pinned `high` (the exec time
     difference is the ramp cost). gpu_metrics is supporting evidence only.
   - Idle: sclk sits at level 1 (≈ 670–790 MHz), gfxclk average ≈ 650–690 MHz.
-  - `trace/dpm.sh [auto|high|...]` shows / sets the level. Pin and restore not yet tested (root).
+  - `trace/dpm.sh [auto|high|...]` shows / sets the level. **Pin and restore work.** On this APU
+    `pp_dpm_sclk` lists min / current / max: `high` raises the *min* to 3000 MHz
+    (`0: 3000Mhz 1: 714Mhz * 2: 3000Mhz`), but the current clock still read ~714 MHz while idle,
+    so the GPU may still power-gate (GFXOFF) or clock down when idle. Pinning may not remove the
+    wake-up cost after idle: the calibration job must check this. If it doesn't, GFXOFF can be
+    disabled for a control run via debugfs `amdgpu_gfxoff` (root). `auto` restores min 600 MHz.
 
 ## Phase 1: attribution study (main deliverable)
 
@@ -147,11 +154,21 @@ input → client CPU → CS ioctl → [dep wait] → [sched wait: queued, not ye
 - Compare exec time with the same frame on an idle GPU to separate clocks/bandwidth from queueing.
 
 **Steps:**
-- [ ] 1.1 `trace/capture.sh`: trace-cmd record of the phase-0 events plus `gpu_metrics` sclk
-  samples, with a start marker written to `trace_marker`. Output goes to `traces/<scenario>/<run>/`
-  (untracked).
-- [ ] 1.2 `trace/parse.py`: trace → per-entity job table (pid/comm, ctx priority, queue, deps
-  ready, run, HW start, done) and per-frame rows with the breakdown above.
+- [x] 1.1 `trace/capture.sh` (done in phase 0; also records `gpu_metrics.csv`, waits for
+  bpftrace to attach, ~3 s, before starting the workload).
+- [~] 1.2 `trace/parse.py RUN`: writes `RUN/jobs.csv` and prints per-client p50/p99/max of
+  `dep_wait`, `order_wait`, `sched_wait` (of which `credit_wait`), `ring_wait`, `exec`.
+  Done for jobs. Two lessons from the gonogo traces:
+  - **order_wait** is needed: an entity's jobs run in order, so a job can wait behind its own
+    entity's blocked predecessor (mpv's sdma VM-update jobs waited up to 4.6 ms this way,
+    which first looked like a 4 ms scheduler stall). No policy can remove it, so it must not
+    be counted as scheduling delay.
+  - Dependencies: `drm_sched_job_unschedulable` also reports fences not seen in `add_dep`;
+    the parser uses both. The scheduled fence of a job is context `finished - 1`.
+  - Scheduling-attributable delay = `sched_wait` + `ring_wait`. `sched_wait - credit_wait` is
+    the policy choosing someone else (plus ~20 µs work-item latency); `credit_wait` and
+    `ring_wait` are queueing behind other clients' jobs on the ring (2 credits, non-preemptive).
+  - Still to do: per-frame rows (needs burst_client's log, step 1.2b).
 - [ ] 1.3 Burst sources (primary), all driven by scripts (`ydotool`, `hyprctl dispatch`, `wtype`):
   Hyprland window/workspace animations, GTK app launches, Firefox smooth scroll, and
   `trace/burst_client` (small Vulkan/Wayland client with tunable per-frame cost and burst

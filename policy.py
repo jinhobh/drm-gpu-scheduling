@@ -23,9 +23,9 @@
   vblank grid (period = smallest gap between deadlines), how long before vblank it
   submits, and its cost; its next frame is due by the next vblank, or before its
   next wake-up if it is too heavy to make the vblank.
-* Interactive frames: an entity that is not a hog starts a frame once per vblank
-  during a burst, so its next frame is predicted one period after the current one
-  started (EWMA frame cost), and must finish before the compositor latches it
+* Interactive frames: an entity that is not a hog starts a frame every k vblanks
+  during a burst (k from its last frame interval), so its next frame is predicted k
+  periods after the current one started (EWMA frame cost), and must finish before the compositor latches it
   (vblank grid minus the compositor's lead).
 * Holds: a hog's job (cost = EWMA of its job times) is held back if running it first
   would make the predicted urgent frames infeasible (EDF walk in arrival order) while
@@ -81,6 +81,7 @@ class Policy(PolicyBase):
         e.ps.fsum = 0           # GPU time received since the current frame started
         e.ps.last_f = 0         # ... during the previous frame
         e.ps.fcost = 0.0        # EWMA of GPU time per frame
+        e.ps.fk = 1             # frame interval in vblank periods
 
     def job_push(self, e, j):
         now = self.sched.now
@@ -89,6 +90,10 @@ class Policy(PolicyBase):
         if e.ps.last_push is None or now - e.ps.last_push > FRAME_GAP:
             if e.ps.frame_t is not None:
                 e.ps.fcost = ewma(e.ps.fcost, e.ps.fsum)
+                if self.period:
+                    k = round((now - e.ps.frame_t) / self.period)
+                    if k <= 4:
+                        e.ps.fk = max(1, k)
             e.ps.last_f = e.ps.fsum
             e.ps.fsum = 0
             e.ps.frame_t = now
@@ -133,7 +138,7 @@ class Policy(PolicyBase):
         for e in self.sched.entities:
             if e.priority < PRIO_NORMAL or e.queue or e.ps.frame_t is None or self._is_hog(e):
                 continue
-            a = e.ps.frame_t + p
+            a = e.ps.frame_t + e.ps.fk * p
             if a < now - JITTER:
                 continue
             a = max(a, now)

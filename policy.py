@@ -28,7 +28,9 @@
 * Compositor protection: the HIGH (DRM master) entity's fence deadlines reveal the
   vblank grid (period = smallest gap between deadlines), how long before vblank it
   submits, and its cost; its next frame is due by the next vblank, or before its
-  next wake-up if it is too heavy to make the vblank.
+  next wake-up if it is too heavy to make the vblank.  It skips a vblank while its
+  previous frame is still pending, so the prediction rolls forward on the grid for
+  up to ROLL vblanks after its last frame.
 * Interactive frames: an entity that is not a hog starts a frame every k vblanks
   during a burst (k from its last frame interval), so its next frame is predicted k
   periods after the current one started (EWMA frame cost), and must finish before the compositor latches it
@@ -68,6 +70,7 @@ MARGIN = 300          # latch pad + doorbell + context switch (µs)
 FRAME_GAP = 500       # pushes further apart than this start a new frame (µs)
 K_DEV = 0.5           # hog job estimate = avg + K_DEV * mean absolute deviation
 JITTER = 500          # a predicted frame may arrive this late (µs)
+ROLL = 3              # keep predicting compositor frames this many vblanks after the last
 IDLE_FRAC = 0.10      # holds may idle the ring at most this fraction of the time
 IDLE_CAP = 250000     # ... banked up to this much, so bursts can use idle saved earlier (µs)
 
@@ -146,10 +149,12 @@ class Policy(PolicyBase):
         p = self.period
         if p is None:
             return out
-        v = self.vblank + p
-        a = v - self.comp_lead
-        c = self.comp_cost + MARGIN
-        if a > now:
+        # its frames are skipped while the previous one is pending: roll forward on the grid
+        k = max(1, (now + self.comp_lead - self.vblank) // p + 1)
+        if k <= ROLL:
+            v = self.vblank + k * p
+            a = v - self.comp_lead
+            c = self.comp_cost + MARGIN
             if a + c > v:
                 v += p - self.comp_lead     # can't make this vblank: due before next wake
             out.append((a, c, v, False))

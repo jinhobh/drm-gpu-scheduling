@@ -13,7 +13,7 @@
 * Compositor protection: the HIGH (DRM master) entity's fence deadlines reveal the
   vblank grid (period = smallest gap between deadlines), how long before vblank it
   submits, and its cost.  A job of a NORMAL/LOW hog (more than HOG_BURST of GPU time
-  since it was last idle, BORE's burst time) whose estimated cost (EWMA of its entity's job times) would run past the compositor's
+  since it was last idle, or in its previous burst: BORE's burst time) whose estimated cost (EWMA of its entity's job times) would run past the compositor's
   latest start for the next vblank is held back if the compositor is due within
   HOLD_MAX; otherwise it runs.
 
@@ -49,6 +49,7 @@ class Policy(PolicyBase):
         e.ps.vr = self.min_vr
         e.ps.avg = 0.0
         e.ps.burst = 0
+        e.ps.last_burst = 0
 
     def job_push(self, e, j):
         if e.idle_since_us is not None:
@@ -72,6 +73,7 @@ class Policy(PolicyBase):
             self.comp_cost = ewma(self.comp_cost, j.gpu_us)
 
     def entity_idle(self, e):
+        e.ps.last_burst = e.ps.burst
         e.ps.burst = 0
 
     def _comp_window(self, now):
@@ -104,7 +106,7 @@ class Policy(PolicyBase):
             if e.priority >= PRIO_NORMAL:
                 if normal_busy:
                     continue
-                if (win is not None and e.ps.burst > HOG_BURST and win[0] - now <= HOLD_MAX
+                if (win is not None and max(e.ps.burst, e.ps.last_burst) > HOG_BURST and win[0] - now <= HOLD_MAX
                         and now + e.ps.avg > win[1]):
                     held = win[0]
                     continue

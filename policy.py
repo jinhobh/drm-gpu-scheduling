@@ -29,7 +29,10 @@
   (vblank grid minus the compositor's lead).
 * Holds: a hog's job (cost = EWMA of its job times) is held back if running it first
   would make the predicted urgent frames infeasible (EDF walk in arrival order) while
-  they are feasible without it, and the first of them is due within HOLD_MAX.
+  they are feasible without it, and the first of them is due within HOLD_MAX.  If the
+  arrival is further out, a conflicting hog job shorter than a vblank period is only
+  deferred: any other ready job goes first (no idling).  Longer jobs can never fit
+  between frames and keep their fair turn.
 * Starvation guard: a NORMAL/LOW head job ready for longer than AGE_US goes first
   among NORMAL/LOW and is never held.
 * Holds draw on an idle budget that refills at IDLE_FRAC of wall time, so work
@@ -170,7 +173,7 @@ class Policy(PolicyBase):
         dt = now - self.last_t
         self.last_t = now
         self.budget = min(IDLE_CAP, self.budget + dt * IDLE_FRAC - (dt if self.holding else 0))
-        urgent = self._urgent(now) if s.name == "gfx" and self.budget > 0 else ()
+        urgent = self._urgent(now) if s.name == "gfx" else ()
         best = None
         best_key = None
         held = None
@@ -178,6 +181,7 @@ class Policy(PolicyBase):
             if not e.ready:
                 continue
             aged = now - e.head.ready_us > AGE_US[e.priority]
+            defer = False
             if e.priority >= PRIO_NORMAL:
                 hog = self._is_hog(e)
                 if normal_busy is not None and (hog or normal_busy != e.id):
@@ -185,14 +189,17 @@ class Policy(PolicyBase):
                 if not aged and hog:
                     if s.credits_used:
                         continue
-                    if (urgent and urgent[0][0] - now <= HOLD_MAX
-                            and not self._feasible(now + e.ps.avg, urgent)
+                    if (urgent and not self._feasible(now + e.ps.avg, urgent)
                             and self._feasible(now, urgent)):
-                        held = urgent[0][0]
-                        continue
-            key = (min(e.priority, PRIO_NORMAL), not aged, e.ps.vr, e.id)
+                        if self.budget > 0 and urgent[0][0] - now <= HOLD_MAX:
+                            held = urgent[0][0]
+                            continue
+                        defer = e.ps.avg < self.period
+            key = (min(e.priority, PRIO_NORMAL), not aged, defer, e.ps.vr, e.id)
             if best_key is None or key < best_key:
                 best, best_key = e, key
+        if best is not None and best_key[2] and held is not None:
+            best = None
         self.holding = best is None and held is not None
         if self.holding:
             s.request_wakeup(max(held, now + 100))

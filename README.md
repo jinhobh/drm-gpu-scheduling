@@ -1,7 +1,7 @@
 # drm-gpu-scheduling — agentic search for a BORE-inspired fair drm_sched policy
 
 Goal: an AMD APU with a small VRAM carveout (this machine: Ryzen AI 7 350, Radeon 860M,
-512 MiB carveout, kernel 7.0 with drm_sched `sched_policy=1` FIFO) should absorb
+512 MiB carveout, kernel 7.2.11 with drm_sched `sched_policy=1` FIFO) should absorb
 **spontaneous burst loads** — widget animations, liquid-glass style interactions, app
 launches with heavy first frames — smoothly, even while something else is hogging the GPU.
 
@@ -9,6 +9,18 @@ An agent iterates on one file, `policy.py`, a drm_sched entity-selection policy.
 deterministic simulator scores each attempt in ~1–3 s. The agent's loop is in
 [program.md](program.md), modelled on Karpathy's *autoresearch*: one editable file, one
 scalar, keep or `git reset`, repeat.
+
+## Status
+
+1. **Policy search in the simulator: done.** After 60 experiments (branches `opt/oct16`,
+   `opt/oct18`), dev `jank_score` went from 59.9 (the upstream-fair approximation) to
+   **16.26** (`policy.py` at `da6958c`), at diminishing returns.
+2. **Real traces on real hardware: in progress.** The plan, progress and next to-do are in
+   [plan.md](plan.md). The goal is to show, on this laptop, that interactive bursts suffer
+   measurable GPU delay *caused by scheduling*, and to fit the simulator to measured traces.
+   After that, the policy gets ported to the kernel and A/B tested.
+   Done so far: go/no-go checks (all rendering goes through drm_sched) and a trace capture
+   and per-job latency breakdown toolchain in `trace/`.
 
 ## The training objective
 
@@ -49,6 +61,7 @@ should be: holding the ring idle, thrashing VRAM.
 | `baselines/fair.py` | **59.9** | 54.5 | upstream CFS-style "fair" approximation, the agent's starting `policy.py` |
 | `baselines/bore_naive.py` | 46.3 | 43.9 | direct BORE port: jank 39%, but the mimic takes 74% of the GPU |
 | `baselines/oracle_trusted.py` | 37.7 | 42.9 | cheats: sees the future and true costs. A hint of headroom, not a bound |
+| `policy.py` (`da6958c`) | **16.26** | | result of the agent runs (see Status) |
 
 Without the work-conservation constraint the oracle drives jank to ~0–5% by starving hogs.
 The interesting problem is the trade-off, not whether jank can be removed.
@@ -67,6 +80,9 @@ gpusim/workloads.py       compositor, animators, games, compute, mimic, app laun
 gpusim/scenarios.py       the 10-scenario suite + holdout perturbations
 gpusim/metrics.py         objective definition
 gpusim/loader.py          kernel-realism sandbox for policies
+plan.md                   real-hardware phase: status, findings, ordered to-do
+trace/                    capture + analysis tools for real traces (see plan.md's tooling table)
+traces/                   captured runs (gitignored)
 ```
 
 ## Running it
@@ -96,6 +112,33 @@ python3 score.py --split holdout
 Compare dev against holdout. A widening gap means the agent is overfitting the dev seeds.
 Also read `policy.py`'s docstring and diff for anything that isn't kernel-plausible.
 
+### Real traces
+
+Capturing needs root (tracefs, bpftrace, DPM). Use absolute paths:
+
+```bash
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh NAME [SECONDS] -- WORKLOAD [ARGS...]
+```
+
+```bash
+python3 trace/parse.py traces/NAME/<timestamp>     # per-job breakdown -> jobs.csv + summary
+```
+
+```bash
+python3 trace/gonogo.py traces/NAME/<timestamp>    # clients, drm_sched path, priority, deadlines
+```
+
+```bash
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/dpm.sh high|auto   # pin / restore DPM
+```
+
+`capture.sh` runs WORKLOAD as you inside the Hyprland session. It records trace-cmd
+(gpu_scheduler, amdgpu, dma_fence and vblank events), bpftrace (submitter pid and priority,
+fence deadlines), fdinfo and `gpu_metrics`. `parse.py` splits each job's time into the
+dependency, in-order and scheduler waits, the wait for ring credits, the wait behind earlier
+jobs on the ring, and execution. Only the scheduler, credit and ring waits can be changed by
+a scheduling policy.
+
 ## What the simulator models
 
 * **drm_sched semantics**: per-entity FIFO queues, head-only selection, dependency fences
@@ -119,18 +162,47 @@ Also read `policy.py`'s docstring and diff for anything that isn't kernel-plausi
 
 ### Known gaps (sim → real)
 
-Not modelled: GPU clock ramp-up after idle (DPM), which matters a lot for "spontaneous"
-bursts on APUs; compute rings and MES/user queues (they bypass drm_sched); mutter/KWin's
-adaptive max-render-time; partial-frame overlap between consecutive jobs; real CS ioctl
-costs. Costs are plausible for an 860M, not measured. The next step for fidelity is to
-record real traces on this machine (drm_sched/dma_fence tracepoints via perfetto or
-`trace-cmd`, plus `wp_presentation` feedback) and fit `scenarios.py` to them.
+Not modelled:
+* GPU clock ramp-up and GFXOFF wake-up after idle (DPM). This may matter a lot for
+  "spontaneous" bursts on APUs.
+* Kernel compute rings (`comp_1.x.y`; they do go through drm_sched, but the sim has none).
+* KFD/ROCm compute, which bypasses drm_sched.
+* Compositor adaptive max-render-time.
+* Partial-frame overlap between consecutive jobs.
+* Real CS ioctl costs.
+
+Costs are plausible for an 860M, not measured. Phase 2 ([plan.md](plan.md)) records real
+traces and fits `scenarios.py` to them.
+
+First findings from real traces on this machine (7.2.11, Mesa 26.2.5, Hyprland 0.56):
+* **No user queues.** With `amdgpu.user_queue=-1` (auto), all GL (radeonsi) and Vulkan
+  (RADV) rendering still goes through drm_sched, so a drm_sched policy sees all of it.
+* **The compositor assumptions hold.** Hyprland renders at HIGH priority, and its fences are
+  the only ones that get deadlines (set by the atomic-commit worker). Client fences never
+  carry deadlines.
+* **The sim's compositor is too cheap.** Hyprland frames cost 1.1–1.6 ms median and up to
+  4.9 ms of GPU time (two displays, one at 2560x1440).
+* **The sim has no kernel jobs.** amdgpu kernel jobs (VM updates, clears) run on sdma0 in
+  the client's context, with negative client ids. Software-decoded video creates thousands
+  of them.
+* **In-order waits are not scheduling delay.** An entity's jobs run in order, so a job can
+  wait milliseconds behind its own blocked predecessor. That wait is not caused by the
+  scheduler, and the trace analysis keeps it out of scheduling delay.
+* **Clock readings are coarse.** `gpu_metrics` (v3.0) reports only averaged clocks, about
+  every 6 ms, so ramp-up has to be measured by its effect on a fixed calibration job.
 
 ### Path to the kernel
 
 The API mirrors drm_sched on purpose: `select()` ↔ `drm_sched_select_entity`, hooks ↔
 `push_job / run_job / free_job / entity_init`, `ps` ↔ new fields in `drm_sched_entity` /
 `drm_sched_entity_stats`, `deadline_us` ↔ `dma_fence_set_deadline` (already propagated by
-`drm_sched_fence`). A winning policy becomes a `sched_policy=2` option in `gpu-sched.ko`
-(a module on this kernel), built out-of-tree against the 7.0 headers and A/B tested on this
-APU against `sched_policy=1`.
+`drm_sched_fence`).
+
+7.2's `gpu_sched` already offers 0 = RR, 1 = FIFO (default) and **2 = upstream "Fair
+(experimental)"**. 7.2 also has upstream's fair rework: an rb-tree run queue,
+per-entity `drm_sched_entity_stats` (runtime, vruntime, average job time), `rq_priority`, and
+`deadline` and `drm_client_id` in `drm_sched_fence`. The winning policy becomes
+**`sched_policy=3`**, built on that code. Because this laptop is a daily driver, it ships in a
+separately named, side-by-side test kernel package (`linux-drmsched`, with amdgpu rebuilt in
+the same tree) that has its own boot entry. The stock kernel stays the default. It is A/B
+tested on this APU against policies 1 and 2 (plan.md, phases 3–4).

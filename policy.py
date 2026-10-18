@@ -8,9 +8,9 @@
   up to CREDIT µs of GPU time it did not use while asleep (GENTLE_FAIR_SLEEPERS).
   Short-burst clients therefore jump ahead of hogs for a whole frame, while a hog
   that sleeps briefly between jobs only earns as much credit as it slept.
-* HW queue depth: at most one NORMAL/LOW job on the ring at a time, and a hog only
-  starts on an empty ring, so an urgent frame never waits behind two
-  non-preemptible jobs one of which is a hog's.
+* HW queue depth: at most one NORMAL/LOW entity on the ring at a time (a non-hog may
+  queue its own next job behind its running one), and a hog only starts on an empty
+  ring, so an urgent frame never waits behind two non-preemptible jobs.
 * Hogs: BORE's burst time is CPU time between sleeps; the GPU analogue used here is
   the GPU time an entity received between its own frame submissions (pushes more
   than FRAME_GAP apart), i.e. while its client was not back on the CPU producing the
@@ -139,11 +139,11 @@ class Policy(PolicyBase):
         active = [e for e in s.entities if e.queue or e.inflight]
         if active:
             self.min_vr = max(self.min_vr, min(e.ps.vr for e in active))
-        normal_busy = False
+        normal_busy = None      # id of the NORMAL/LOW entity with a job on the ring
         for j in s.hw_jobs:
             o = s.lookup(j.ring, j.entity_id)
             if o is not None and o.priority >= PRIO_NORMAL:
-                normal_busy = True
+                normal_busy = o.id
         dt = now - self.last_t
         self.last_t = now
         self.budget = min(IDLE_CAP, self.budget + dt * IDLE_FRAC - (dt if self.holding else 0))
@@ -156,9 +156,10 @@ class Policy(PolicyBase):
                 continue
             aged = now - e.head.ready_us > AGE_US[e.priority]
             if e.priority >= PRIO_NORMAL:
-                if normal_busy:
+                hog = self._is_hog(e)
+                if normal_busy is not None and (hog or normal_busy != e.id):
                     continue
-                if not aged and self._is_hog(e):
+                if not aged and hog:
                     if s.credits_used:
                         continue
                     t = None

@@ -1,88 +1,58 @@
-"""Approximation of upstream's CFS-inspired "fair" drm_sched policy (Tvrtko Ursulin,
-"Fair(er) DRM scheduler", merged for 7.2 then reverted as default).
+"""Fair drm_sched policy with bounded sleeper credit (BORE/CFS-style interactivity).
 
-* One run queue for all priorities, ordered by virtual GPU time.
-* vruntime += gpu_time << shift[prio]; shifts KERNEL=1, HIGH=2, NORMAL=4, LOW=7
-  (each step down gets ~2x/4x/8x less GPU time).  Accounted when a job finishes.
-* An entity leaves the tree when its queue empties and remembers its lag relative to the
-  tree minimum; on re-entry it is placed at min_vruntime + lag.
-* "Favour interactive clients slightly": an entity re-joining with zero lag goes just in
-  front of the head if its average job is shorter than the scheduler average (EWMA),
-  just behind otherwise; a lower-priority one goes further back.
+* KERNEL and HIGH entities are strictly ahead; NORMAL/LOW share by virtual GPU time:
+  vruntime += gpu_time << shift[prio]  (shifts KERNEL=1, HIGH=2, NORMAL=4, LOW=7).
+* min_vr is a monotonic clock (cfs_rq->min_vruntime): the smallest vruntime among
+  entities that have work queued or in flight.
+* An entity waking from idle is placed at max(vr, min_vr - CREDIT << shift): it keeps
+  up to CREDIT µs of GPU time it did not use while asleep (GENTLE_FAIR_SLEEPERS).
+  Short-burst clients therefore jump ahead of hogs for a whole frame, while a hog
+  that sleeps briefly between jobs only earns as much credit as it slept.
+* HW queue depth: at most one NORMAL/LOW job on the ring at a time, so an urgent
+  frame never waits behind two non-preemptible hog jobs.
+
+Kernel mapping: vr/min_vr are drm_sched_entity / drm_sched_rq fields; idle detection
+is the entity queue becoming empty with no job in flight; gpu_time comes from the
+scheduled/finished fence timestamps.
 """
 
-from gpusim.api import PolicyBase
+from gpusim.api import PRIO_NORMAL, PolicyBase
 
 SHIFT = (1, 2, 4, 7)
-
-
-def ewma(avg, x):
-    # DECLARE_EWMA(drm_sched_avgtime, 6, 4): weight 1/16
-    return x if avg == 0 else avg + (x - avg) / 16.0
+CREDIT = 16000        # µs of unused GPU time an idle entity may bank
 
 
 class Policy(PolicyBase):
     def __init__(self, sched):
         super().__init__(sched)
-        self.sched_avg = 0.0
+        self.min_vr = 0
 
     def entity_init(self, e):
-        e.ps.vr = 0.0
-        e.ps.lag = 0.0
-        e.ps.in_tree = False
-        e.ps.avg = 0.0
-
-    def _tree(self, skip=None):
-        return [e for e in self.sched.entities if e.ps.in_tree and e is not skip]
-
-    def _min_vr(self, skip=None):
-        t = self._tree(skip)
-        return min(e.ps.vr for e in t) if t else None
+        e.ps.vr = self.min_vr
 
     def job_push(self, e, j):
-        if e.ps.in_tree:
-            return
-        head = None
-        for x in self._tree():
-            if head is None or (x.ps.vr, x.id) < (head.ps.vr, head.id):
-                head = x
-        if head is None:
-            e.ps.vr = max(e.ps.vr, 0.0)
-        elif e.ps.lag > 0:
-            e.ps.vr = head.ps.vr + e.ps.lag
-        elif e.priority > head.priority:
-            e.ps.vr = head.ps.vr + ((1 + e.ps.avg + self.sched_avg) * (1 << SHIFT[e.priority]))
-        elif e.priority < head.priority:
-            e.ps.vr = head.ps.vr - (head.priority - e.priority) * 1e-3
-        else:
-            e.ps.vr = head.ps.vr + (-1e-3 if e.ps.avg <= self.sched_avg else 1e-3)
-        e.ps.lag = 0.0
-        e.ps.in_tree = True
-
-    def job_run(self, e, j):
-        if not e.queue:
-            m = self._min_vr(skip=e)
-            e.ps.lag = max(0.0, e.ps.vr - m) if m is not None else 0.0
-            e.ps.in_tree = False
+        if e.idle_since_us is not None:
+            e.ps.vr = max(e.ps.vr, self.min_vr - (CREDIT << SHIFT[e.priority]))
 
     def job_done(self, e, j):
-        dv = j.gpu_us * (1 << SHIFT[e.priority])
-        if e.ps.in_tree:
-            e.ps.vr += dv
-        else:
-            e.ps.lag += dv
-            e.ps.vr += dv
-        e.ps.avg = ewma(e.ps.avg, j.gpu_us)
-        self.sched_avg = ewma(self.sched_avg, j.gpu_us)
+        e.ps.vr += j.gpu_us << SHIFT[e.priority]
 
     def select(self):
+        s = self.sched
+        active = [e for e in s.entities if e.queue or e.inflight]
+        if active:
+            self.min_vr = max(self.min_vr, min(e.ps.vr for e in active))
+        normal_busy = False
+        for j in s.hw_jobs:
+            o = s.lookup(j.ring, j.entity_id)
+            if o is not None and o.priority >= PRIO_NORMAL:
+                normal_busy = True
         best = None
-        busy = any(j.ring == self.sched.name and self.sched.lookup(j.ring, j.entity_id) is not None
-                   and self.sched.lookup(j.ring, j.entity_id).priority >= 2 for j in self.sched.hw_jobs)
-        for e in self.sched.entities:
-            if busy and e.priority >= 2:
+        best_key = None
+        for e in active:
+            if not e.ready or (normal_busy and e.priority >= PRIO_NORMAL):
                 continue
-            if e.ready and e.ps.in_tree:
-                if best is None or (e.ps.vr, e.id) < (best.ps.vr, best.id):
-                    best = e
+            key = (min(e.priority, PRIO_NORMAL), e.ps.vr, e.id)
+            if best_key is None or key < best_key:
+                best, best_key = e, key
         return best

@@ -11,7 +11,8 @@
   Short-burst clients therefore jump ahead of hogs for a whole frame, while a hog
   that sleeps briefly between jobs only earns as much credit as it slept.
 * Within NORMAL/LOW, entities that are not hogs go before hogs; hogs cannot starve
-  thanks to the starvation guard below.  Hogs are ordered by vruntime, non-hogs
+  thanks to the starvation guard below.  Hogs are ordered by vruntime.  Non-hogs go
+  first-frame-after-idle first (input response is graded by how late it is), then
   earliest deadline first: the compositor latch after the later of the head frame's
   ideal finish and now + its queued work, then least queued work.
 * HW queue depth: at most one NORMAL/LOW entity on the ring at a time (a non-hog may
@@ -69,13 +70,13 @@ LONG = 50000          # a job of length L is charged L * (1 + L / LONG) of vrunt
 HOLD_MAX = 2000       # longest the ring may idle waiting for an urgent arrival (µs)
 HOG_BURST = 3000      # GPU time per frame beyond which an entity is a hog (µs)
 HOG_QUEUE = 4         # ... or more jobs than this queued
-CREDIT_MIN = 20000    # ... unless it still has this much sleeper credit left (µs)
+CREDIT_MIN = 10000    # ... unless it still has this much sleeper credit left (µs)
 SLEEP_MIN = 2000      # ... and really slept (idle this long) before its current burst
 AGE_US = (0, 0, 150000, 600000)   # a head job ready this long goes first (no starvation)
 MARGIN = 300          # latch pad + doorbell + context switch (µs)
 FRAME_GAP = 500       # pushes further apart than this start a new frame (µs)
 K_DEV = 0.5           # hog job estimate = avg + K_DEV * mean absolute deviation
-JITTER = 500          # a predicted frame may arrive this late (µs)
+JITTER = 800          # a predicted frame may arrive this late (µs)
 ROLL = 3              # keep predicting compositor frames this many vblanks after the last
 IDLE_FRAC = 0.10      # holds may idle the ring at most this fraction of the time
 IDLE_CAP = 250000     # ... banked up to this much, so bursts can use idle saved earlier (µs)
@@ -108,12 +109,16 @@ class Policy(PolicyBase):
         e.ps.fcost = 0.0        # EWMA of GPU time per frame
         e.ps.fk = 1             # frame interval in vblank periods
         e.ps.slept = True       # its last idle period was at least SLEEP_MIN
+        e.ps.first = False      # its current frame is the first after a long idle
 
     def job_push(self, e, j):
         now = self.sched.now
         if e.idle_since_us is not None:
             e.ps.vr = max(e.ps.vr, self.min_vr - (CREDIT << SHIFT[e.priority]))
             e.ps.slept = now - e.idle_since_us >= SLEEP_MIN
+            e.ps.first = self.period is not None and now - e.idle_since_us > 2 * self.period
+        elif e.ps.last_push is not None and now - e.ps.last_push > FRAME_GAP:
+            e.ps.first = False
         if e.ps.last_push is None or now - e.ps.last_push > FRAME_GAP:
             if e.ps.frame_t is not None:
                 e.ps.fcost = ewma(e.ps.fcost, e.ps.fsum)
@@ -237,7 +242,8 @@ class Policy(PolicyBase):
             if not hog and e.priority >= PRIO_NORMAL and self.period:
                 work = len(e.queue) * e.ps.avg
                 dl = self._latch(max(e.head.submit_us + e.ps.fcost, now + work))
-            key = (min(e.priority, PRIO_NORMAL), not aged, hog, defer, dl, work, e.ps.vr, e.id)
+            key = (min(e.priority, PRIO_NORMAL), not aged, hog, defer, not e.ps.first, dl, work,
+                   e.ps.vr, e.id)
             if best_key is None or key < best_key:
                 best, best_key = e, key
         if best is not None and best_key[3] and held is not None:

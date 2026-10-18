@@ -22,7 +22,9 @@
   than FRAME_GAP apart), i.e. while its client was not back on the CPU producing the
   next frame.  It does not grow when the scheduler starves a client, unlike time
   since idle.  An entity is a hog if its current or previous frame exceeded
-  HOG_BURST, or it keeps more than HOG_QUEUE jobs queued.
+  HOG_BURST, or it keeps more than HOG_QUEUE jobs queued, unless it still has more
+  than CREDIT_MIN of sleeper credit (it has used well under its fair share lately,
+  e.g. a freshly launched app); a backlogged hog sits at min_vr and never does.
 * Compositor protection: the HIGH (DRM master) entity's fence deadlines reveal the
   vblank grid (period = smallest gap between deadlines), how long before vblank it
   submits, and its cost; its next frame is due by the next vblank, or before its
@@ -58,6 +60,7 @@ LONG = 50000          # a job of length L is charged L * (1 + L / LONG) of vrunt
 HOLD_MAX = 2000       # longest the ring may idle waiting for an urgent arrival (µs)
 HOG_BURST = 3000      # GPU time per frame beyond which an entity is a hog (µs)
 HOG_QUEUE = 4         # ... or more jobs than this queued
+CREDIT_MIN = 10000    # ... unless it still has this much sleeper credit left (µs)
 AGE_US = (0, 0, 150000, 600000)   # a head job ready this long goes first (no starvation)
 MARGIN = 300          # latch pad + doorbell + context switch (µs)
 FRAME_GAP = 500       # pushes further apart than this start a new frame (µs)
@@ -126,6 +129,8 @@ class Policy(PolicyBase):
             self.comp_cost = ewma(self.comp_cost, j.gpu_us)
 
     def _is_hog(self, e):
+        if self.min_vr - e.ps.vr > CREDIT_MIN << SHIFT[e.priority]:
+            return False
         return max(e.ps.fsum, e.ps.last_f) > HOG_BURST or len(e.queue) > HOG_QUEUE
 
     def _urgent(self, now):

@@ -8,8 +8,9 @@
   up to CREDIT µs of GPU time it did not use while asleep (GENTLE_FAIR_SLEEPERS).
   Short-burst clients therefore jump ahead of hogs for a whole frame, while a hog
   that sleeps briefly between jobs only earns as much credit as it slept.
-* HW queue depth: at most one NORMAL/LOW job on the ring at a time, so an urgent
-  frame never waits behind two non-preemptible hog jobs.
+* HW queue depth: at most one NORMAL/LOW job on the ring at a time, and a hog only
+  starts on an empty ring, so an urgent frame never waits behind two
+  non-preemptible jobs one of which is a hog's.
 * Compositor protection: the HIGH (DRM master) entity's fence deadlines reveal the
   vblank grid (period = smallest gap between deadlines), how long before vblank it
   submits, and its cost.  A job of a NORMAL/LOW hog (more than HOG_BURST of GPU time
@@ -147,6 +148,8 @@ class Policy(PolicyBase):
                 if normal_busy:
                     continue
                 if not aged and self._is_hog(e):
+                    if s.credits_used:
+                        continue
                     t = None
                     for a, ls in urgent:
                         if a - now <= HOLD_MAX and now + e.ps.avg > ls:

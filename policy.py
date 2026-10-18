@@ -121,8 +121,11 @@ class Policy(PolicyBase):
         if p is None:
             return out
         v = self.vblank + p
-        if v - self.comp_lead > now:
-            out.append((v - self.comp_lead, v - self.comp_cost - MARGIN))
+        a = v - self.comp_lead
+        if a > now:
+            if a + self.comp_cost + MARGIN > v:
+                v += p - self.comp_lead     # can't make this vblank: due before next wake
+            out.append((a, v - self.comp_cost - MARGIN))
         base = self.vblank - self.comp_lead - MARGIN
         for e in self.sched.entities:
             if e.priority < PRIO_NORMAL or e.queue or e.ps.frame_t is None or self._is_hog(e):

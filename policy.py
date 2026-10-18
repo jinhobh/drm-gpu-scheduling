@@ -66,7 +66,7 @@ CREDIT_MIN = 20000    # ... unless it still has this much sleeper credit left (�
 AGE_US = (0, 0, 150000, 600000)   # a head job ready this long goes first (no starvation)
 MARGIN = 300          # latch pad + doorbell + context switch (µs)
 FRAME_GAP = 500       # pushes further apart than this start a new frame (µs)
-K_DEV = 1.0           # hog job estimate = avg + K_DEV * mean absolute deviation
+K_DEV = 0.5           # hog job estimate = avg + K_DEV * mean absolute deviation
 JITTER = 500          # a predicted frame may arrive this late (µs)
 IDLE_FRAC = 0.10      # holds may idle the ring at most this fraction of the time
 IDLE_CAP = 20000      # ... banked up to this much (µs)

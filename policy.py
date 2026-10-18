@@ -49,7 +49,7 @@
   catch up (lowest vruntime) after it.  Nothing is held when the urgent frames
   cannot make it anyway.
 * Starvation guard: a NORMAL/LOW head job ready for longer than AGE_US goes first
-  among NORMAL/LOW and is never held.
+  among NORMAL/LOW and is exempt from holds, deferral and the empty-ring rule.
 * Work conservation: holds draw on an idle budget that refills at IDLE_FRAC of wall
   time (banked up to IDLE_CAP), so holding is bounded whatever the workload.
 
@@ -150,9 +150,9 @@ class Policy(PolicyBase):
         return max(e.ps.fsum, e.ps.last_f) > HOG_BURST or len(e.queue) > HOG_QUEUE
 
     def _urgent(self, now):
-        """(arrival, cost, deadline) of frames predicted to arrive soon, by arrival: the
-        compositor's next frame, and the next frame of each interactive entity in a
-        burst (one frame per vblank), which must finish before the compositor latches it."""
+        """(arrival, cost, deadline, is_client) of frames predicted to arrive soon, by
+        arrival: the compositor's next frame, and the next frame of each interactive
+        entity in a burst (every fk vblanks), due when the compositor latches it."""
         out = []
         p = self.period
         if p is None:

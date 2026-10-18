@@ -18,19 +18,46 @@ Update the **Status** and **Next** sections whenever a step finishes.
 - The search has reached diminishing returns. **Do not tune `policy.py` further** until phase 2
   (fitting the sim) says to.
 
+**In progress: real traces on real hardware** (phase numbers below are this plan's).
+- Phase 0 (go/no-go checks): **done, GO.** All GL and Vulkan rendering goes through drm_sched
+  (no user queues); Hyprland renders at HIGH priority and is the only source of fence deadlines;
+  DPM can be pinned; `gpu_metrics` gives averaged clocks every ~6 ms.
+- Phase 1 (attribution study): capture harness and per-job latency breakdown done
+  (steps 1.1, 1.2 jobs). Next is the synthetic burst client (1.3a).
+- Phases 2–4: not started.
+
+**Tooling (all in `trace/`, captures in `traces/`, gitignored):**
+| file | what it does |
+|---|---|
+| `capture.sh` | root: `sudo trace/capture.sh NAME [SECONDS] -- WORKLOAD...` records trace-cmd (`-C mono`), bpftrace (`bpf/ids.bt`), fdinfo (`clients.py`) and `gpu_metrics.py` while running WORKLOAD as the user in the Hyprland session; writes `traces/NAME/<timestamp>/` |
+| `parse.py` | `python3 trace/parse.py RUN`: per-job breakdown to `RUN/jobs.csv` + per-client p50/p99/max table |
+| `gonogo.py` | which GPU clients go through drm_sched, their priority, who sets deadlines |
+| `bpf/ids.bt` | kprobes: job → pid/comm/priority/client_id; fence deadlines |
+| `clients.py` | fdinfo snapshot of amdgpu clients (engine time, memory, doorbells) |
+| `gpu_metrics.py` | gpu_metrics v3.0 sampler (gfxclk, socclk, fclk, uclk, activity, power) |
+| `dpm.sh` | show / set `power_dpm_force_performance_level` (root to set) |
+| `workloads/gonogo.sh` | step 0.2 workload: vkmark + mpv + Hyprland swaps + kitty launch |
+
+Captures so far: `traces/gonogo/20261018-031904` (GL only, vkmark crashed),
+`traces/gonogo/20261018-032454` (GL + Vulkan, vkmark cube). Both: FIFO, DPM auto, two displays.
+
 **Machine facts (checked 2026-10-18):**
 - Ryzen AI 7 350 / Radeon 860M (GC 11.5.2, MES present), 512 MiB carveout, Hyprland 0.56 (Wayland),
   Mesa 26.2.5.
 - Kernel **7.2.11-arch1-1** (README still says 7.0). `gpu_sched` is a module.
   `sched_policy`: 0 = RR, 1 = FIFO (current), **2 = upstream "Fair (experimental)"**, so our
   policy will be `sched_policy=3`.
-- `amdgpu.user_queue=-1` (auto). User queues bypass drm_sched, so we must check which
-  submissions actually go through it (step 0.2).
-- DPM sclk levels 600 / 787 / 3000 MHz, `power_dpm_force_performance_level=auto`.
+- `amdgpu.user_queue=-1` (auto), but no client uses user queues: all rendering goes through
+  drm_sched (step 0.2).
+- `pp_dpm_sclk` shows min / current / max (600 / ~700 idle / 3000 MHz),
+  `power_dpm_force_performance_level=auto`.
+- Two displays: eDP-1 1920x1200 @ 60 Hz, DP-1 2560x1440 @ 75 Hz (see risks).
 - Installed: linux-headers, trace-cmd, perf, bpftrace, amdgpu_top, vkmark, glmark2,
-  supertuxkart, mpv, ydotool, wtype. **xonotic is not installed** (it is in the repos if wanted).
+  supertuxkart, mpv, ydotool, wtype, vulkan-radeon (RADV); gcc, clang, glslc, wayland-scanner,
+  wayland-protocols, numpy. Not installed: xonotic, meson/ninja.
 - tracefs/debugfs need root and sudo needs a password. The agent cannot sudo: ask the user to
-  run root commands as `! sudo ...` in the Claude Code prompt, or to give tracefs group access.
+  run root commands, **with absolute paths** (the user's terminal is often in another
+  directory), e.g. `sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh ...`.
 
 **Decisions (from the user):**
 - Scope: the full pipeline (phases 0–4 below).
@@ -45,21 +72,28 @@ Update the **Status** and **Next** sections whenever a step finishes.
   (`/lib/modules/7.2.11-arch1-1`), or the default boot entry.
 - A synthetic burst client is kept as the ground-truth control (exact frame cost and timing).
 
-## Next
+## Next (to-do, in order)
 
-**Phase 1, step 1.3: `trace/burst_client`**, the ground-truth burst source. Plain C,
-Vulkan + Wayland (xdg-shell, presentation-time); gcc, glslc, wayland-scanner and the
-protocol XMLs are installed (no meson/ninja: use a Makefile). Requirements:
-- idle for a configurable time, then a burst of N frames at the display rate (FIFO present),
-  each frame a fragment-shader loop with a tunable GPU cost (calibrated in µs at fixed clock);
-  repeat; optional "first frame heavier" multiplier (like an app intro).
-- log per frame, CLOCK_MONOTONIC: burst/frame index, intended start, vkQueueSubmit time,
-  GPU timestamps (vkCmdWriteTimestamp at start/end → exec time and the actual HW start),
-  `wp_presentation_feedback` presented time + refresh + flags (or discarded).
-- a calibration mode that reports the exec time of the same frame after k ms idle vs warm
-  (the DPM / GFXOFF ramp measurement for 0.4).
-Then 1.2b: join burst_client's per-frame log with `jobs.csv` (match by pid + submit time)
-to get the per-frame breakdown.
+1. **1.3a `trace/burst_client`**: the ground-truth burst source. Plain C, Vulkan + Wayland
+   (xdg-shell, presentation-time), built with a Makefile (no meson/ninja).
+   - Idle for a configurable time, then a burst of N frames at the display rate (FIFO
+     present); each frame is a fragment-shader loop with a tunable GPU cost in µs; repeat.
+     Optional heavier first frame (like an app intro).
+   - Log per frame, CLOCK_MONOTONIC: burst/frame index, intended start, vkQueueSubmit time,
+     GPU timestamps (vkCmdWriteTimestamp start/end → actual HW start and exec time),
+     `wp_presentation_feedback` presented time, refresh, flags, or discarded.
+   - Calibration mode: exec time of the same frame after k ms idle vs warm.
+2. **Ramp measurement** (needs 1): calibration runs with DPM `auto` vs `high` (user runs
+   `trace/dpm.sh`), and if `high` doesn't remove the after-idle penalty, with GFXOFF disabled.
+   Record whether ramp-up is a confounder and how big.
+3. **1.2b** join burst_client's per-frame log with `jobs.csv` (pid + submit time → fence) for a
+   per-frame breakdown: submit → sched → ring → exec → presented, vs the idle-GPU baseline.
+4. **1.4 pick heavy hogs**: find vkmark/glmark2 scenes (full screen) and a supertuxkart
+   timedemo that keep gfx busy with multi-ms jobs; keep `vkmark -b cube` as the "job flood"
+   case. Write them as `trace/workloads/*.sh`.
+5. **First attribution capture**: burst_client alone vs with each hog, DPM auto vs high, on
+   one display (ask the user to disable DP-1 or note it), several repeats.
+6. Then the real burst sources (1.3b) and the full matrix (1.5).
 
 ---
 
@@ -94,11 +128,12 @@ to get the per-frame breakdown.
     0.05 ms). Phase 1 needs heavy scenes (vkmark/glmark2 heavier scenes at full screen,
     supertuxkart) and the job-flood case as a separate scenario.
   - Parsing `trace-cmd report` text takes ~10 s for a 27 MB / 15 s trace. OK for now.
-  - GL run `traces/gonogo/20261018-031904` (stock kernel, FIFO, `user_queue=-1`, both displays on):
-  - **GO for OpenGL (radeonsi):** every GPU-busy client (Hyprland, mpv, ghostty, kitty, qs)
+  - **GL (radeonsi)** run `traces/gonogo/20261018-031904` (stock kernel, FIFO, `user_queue=-1`,
+    both displays on): every GPU-busy client (Hyprland, mpv, ghostty, kitty, qs)
     appears in `drm_sched_job_queue/run/done`, with 0 doorbells in fdinfo. User queues are not
     used for GL on this kernel. 11 098 jobs in ~15 s.
-  - (Vulkan was not tested in this run: `vulkan-radeon` was missing, vkmark crashed, mpv fell back to GL.)
+    (Vulkan was not tested in that run: `vulkan-radeon` was missing, so vkmark crashed and mpv
+    fell back to GL.)
   - Rings seen: `gfx_0.0.0` (all client rendering), `comp_1.x.y` (a few compute jobs from mpv,
     ghostty, kitty, Hyprland), `sdma0` (amdgpu kernel jobs).
   - amdgpu kernel jobs carry negative `client_id`s (u64 −1, −2, −3, −4, −8, −10) and are
@@ -168,13 +203,15 @@ input → client CPU → CS ioctl → [dep wait] → [sched wait: queued, not ye
   - Scheduling-attributable delay = `sched_wait` + `ring_wait`. `sched_wait - credit_wait` is
     the policy choosing someone else (plus ~20 µs work-item latency); `credit_wait` and
     `ring_wait` are queueing behind other clients' jobs on the ring (2 credits, non-preemptive).
-  - Still to do: per-frame rows (needs burst_client's log, step 1.2b).
-- [ ] 1.3 Burst sources (primary), all driven by scripts (`ydotool`, `hyprctl dispatch`, `wtype`):
-  Hyprland window/workspace animations, GTK app launches, Firefox smooth scroll, and
-  `trace/burst_client` (small Vulkan/Wayland client with tunable per-frame cost and burst
-  pattern, logging `wp_presentation` feedback) as the ground-truth control.
-- [ ] 1.4 Background and comparison loads: none, vkmark, glmark2, supertuxkart timedemo, mpv
-  (local clip). Games and video are also measured as victims.
+- [ ] 1.2b Per-frame rows: join burst_client's frame log with `jobs.csv` (see Next, item 3).
+- [ ] 1.3a `trace/burst_client`, the ground-truth control (see Next, item 1), including the
+  calibration mode for the DPM / GFXOFF ramp measurement.
+- [ ] 1.3b Real burst sources, driven by scripts (`ydotool`, `hyprctl dispatch`, `wtype`):
+  GTK app launches, Firefox smooth scroll, Hyprland window/workspace animations (compositor
+  work, HIGH: a separate case from client bursts).
+- [ ] 1.4 Background and comparison loads: none, heavy vkmark/glmark2 scenes, supertuxkart
+  timedemo, mpv (local clip); `vkmark -b cube` as the job-flood case. Games and video are also
+  measured as victims.
 - [ ] 1.5 Experiment matrix, repeated runs in randomized order:
   | intervention | rules out |
   |---|---|
@@ -223,8 +260,11 @@ input → client CPU → CS ioctl → [dep wait] → [sched wait: queued, not ye
 
 ## Open questions and risks
 
-- User queues may carry most gfx work on the stock kernel (step 0.2).
-- Hyprland may not run at HIGH priority or set fence deadlines (step 0.3).
+- ~~User queues may carry most gfx work~~: resolved, they don't (0.2).
+- ~~Hyprland may not be HIGH or set deadlines~~: resolved, it is and does (0.3).
+- Pinning DPM to `high` may not remove the after-idle penalty (GFXOFF); see 0.4 and Next, item 2.
+- The sim's compositor cost looks too low (Hyprland frames 1.1–1.6 ms median, up to 4.9 ms);
+  fit it in phase 2.
 - DPM ramp-up may dominate burst latency; if so, that is a result too, and the policy may need
   to account for it.
 - **Two displays** are connected: eDP-1 1920x1200 @ 60 Hz and DP-1 2560x1440 @ 75 Hz, i.e. two

@@ -10,7 +10,8 @@
 #   gpu_metrics.csv  clocks / activity / power at every SMU table refresh (~6 ms)
 #   meta.txt      kernel, module parameters, DPM state, monitors
 #   workload.log  the workload's stdout/stderr
-# The workload runs as $SUDO_USER inside the Hyprland session. If SECONDS is given it is
+# The workload runs as $SUDO_USER inside the Hyprland session, with CAPTURE_OUT set to the
+# output directory (trace/workloads/burst.sh writes burst.csv there). If SECONDS is given it is
 # stopped after that long; otherwise the capture ends when the workload exits.
 set -euo pipefail
 
@@ -27,6 +28,8 @@ shift
 repo=$(cd "$(dirname "$0")/.." && pwd)
 out="$repo/traces/$name/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$out"
+# the workload runs as the user and writes into $out (burst.csv)
+chown "$SUDO_USER": "$out"
 
 uid=$(id -u "$SUDO_USER")
 rt=/run/user/$uid
@@ -34,7 +37,7 @@ wl=$(basename "$(ls "$rt"/wayland-* 2>/dev/null | grep -v '\.lock$' | head -1)")
 hypr=$(ls -t "$rt/hypr" 2>/dev/null | head -1)
 as_user() {
     sudo -u "$SUDO_USER" env XDG_RUNTIME_DIR="$rt" WAYLAND_DISPLAY="$wl" \
-        HYPRLAND_INSTANCE_SIGNATURE="$hypr" DISPLAY="${DISPLAY:-:0}" \
+        HYPRLAND_INSTANCE_SIGNATURE="$hypr" DISPLAY="${DISPLAY:-:0}" CAPTURE_OUT="$out" \
         PATH="/usr/local/bin:/usr/bin:/bin" HOME="$(getent passwd "$SUDO_USER" | cut -d: -f6)" "$@"
 }
 
@@ -106,3 +109,4 @@ set -e
 echo "capture: workload_end rc=$rc" > "$marker"
 sleep 0.5
 echo "capture: wrote $out (workload exit $rc)"
+exit "$rc"

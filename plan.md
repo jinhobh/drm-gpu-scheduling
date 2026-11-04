@@ -43,7 +43,7 @@ Update the **Status** and **Next** sections whenever a step finishes.
   vk-hog p99 ~17 ms under all three; 1 in flight halves it under all three); fair helps a
   hog-blocked frame 0 (8.4 vs 13–14 ms) but starves 35% of after-idle frames behind
   vkmark's job flood for up to 15.5 ms. The p1 re-run (`m3-p1r`, 2026-10-20) agrees; a
-  ~1 ms FIFO-vs-others gap remains, confounded with boot age (Hyprland renders more and
+  ~1 ms FIFO-vs-others gap remains, confounded with boot age and p1r output count (Hyprland renders more and
   costlier jobs in long-running boots; 1.5).
 - **Upstream fair sleeper study done (2026-11-04, former Next 1).** Read pinned
   Linux `v7.2.11` scheduler sources and checked all three m3-p2 vkmark captures.
@@ -59,6 +59,26 @@ Update the **Status** and **Next** sections whenever a step finishes.
   phase 2 needs the actual upstream accounting path, not completion-time updates.
   See [the source/evidence report](trace/reports/fair-sleepers.md) and
   `trace/fair_sleepers.py`. Frozen simulator/policies unchanged.
+- **Research direction updated (2026-11-04):** pursue a conference contribution on
+  automatic control of in-flight GPU work for interactive responsiveness. The measured
+  latency reduction justifies further work, but the proposed kernel policy is not yet
+  hardware-validated and novelty remains to be established. A workshop/short measurement
+  paper is a nearer milestone; a full systems paper requires the comparisons and evidence
+  below. This is a research target, not a claim of publication readiness.
+- **Compositor pacing trace/source study done (2026-11-04, former Next 1).**
+  Added `trace/pacing.py` and [the report](trace/reports/compositor-pacing.md).
+  In m2, frame callback → submit is only 0.04–0.07 ms and present call → next
+  Hyprland GPU submission is ~16.5 ms both alone and under vkmark. The extra
+  refresh appears in next-submission → presentation (~17 vs ~34 ms), which is
+  not a surface-latch measurement. It is **not universal**: m3-p2 vkmark is
+  ~34 ms callback → presentation in all three runs; m3-p0 is ~34/50/34 ms.
+  The old “50 ms under any load/all policies” statement was too broad. Exact
+  WSI/server commit/latch timing remains unobserved; do not fit a fixed extra
+  refresh under load. Hyprland v0.56.0 has no render-ahead knobs; its optional
+  new render scheduler defaults off, but capture-time values were not recorded.
+  **Monitor confound:** all 16 m3-p1r metadata files list eDP-1 AND DP-1 active;
+  earlier m2/m3 matrices list only eDP-1. p1r is not a single-display repeat and
+  cannot isolate boot age. Frozen simulator/policies unchanged.
 - Phases 2–4: not started.
 
 **Tooling (all in `trace/`, captures in `traces/`, gitignored):**
@@ -77,6 +97,7 @@ Update the **Status** and **Next** sections whenever a step finishes.
 | `workloads/hog.sh` | `hog.sh NAME`: one background load (`glmark2-terrain`, `glmark2-refract`, `stk`, `vk-hog`, `vk-hog1` (1 job in flight), `gl-hog` (glmark2 terrain off-screen 4K, 8.5 ms), `vkmark-cube`, `none`) |
 | `workloads/burst.sh` | `burst.sh HOG [BURST_CLIENT_ARGS]`: switch to an empty Hyprland workspace (back at exit), probe GPU timestamps, start the hog, warm up 3 s, run burst_client; logs to `$CAPTURE_OUT` (set by `capture.sh`) |
 | `join.py` | `python3 trace/join.py RUN...`: 1.2b, burst.csv × trace → `RUN/frames.csv`, per frame: submit / dep / order / pick / credit / ring / wake split of the start latency, `ok` (gpu_start inside [t_run, t_done]), `busy_by` (whose jobs ran on the ring while the frame waited); medians for frame 0 vs 1+, one line per run, pooled per condition; `--trace-only` (automatic without burst.csv) takes the frames from the trace alone; a run whose timestamp correction is looser than 100 µs is re-aligned on the fences (stderr says by how much) |
+| `pacing.py` | `python3 trace/pacing.py RUN... [--csv FILE]`: read-only frame callback / present-call / Hyprland gfx submission / hardware vblank comparison; selects output by presentation MSC and timestamp; see `trace/reports/compositor-pacing.md` |
 | `fair_sleepers.py` | `python3 trace/fair_sleepers.py RUN...`: read-only check of frame-0 stalls, overtaking vkmark queue exhaustion, queued work at release, and nearest HIGH Hyprland submission; see `trace/reports/fair-sleepers.md` |
 | `compare.py` | `python3 trace/compare.py [LABEL=]MATRIX[,MATRIX]...`: after join.py, per hog × matrix: start latency f0/f1+ p50/p99, presented − intended, Hyprland ms/frame, hog fps and job time |
 | `matrix.sh` | root: `sudo trace/matrix.sh [NAME]`: traced `burst.sh` runs for each hog × DPM condition × `REPS`, plus a `--calib` run per condition, shuffled; restores DPM auto / GFXOFF on exit; rejects unknown `HOGS` names up front; `DRY=1` prints the order |
@@ -98,7 +119,8 @@ next to the terminal).
 - `pp_dpm_sclk` shows min / current / max (600 / ~700 idle / 3000 MHz),
   `power_dpm_force_performance_level=auto`.
 - Two displays: eDP-1 1920x1200 @ 60 Hz, DP-1 2560x1440 @ 75 Hz (see risks). DP-1 (a dock)
-  unplugged 2026-10-18 19:01 for the traced matrix: eDP-1 only from `m1` on.
+  unplugged 2026-10-18 19:01 for the traced matrix: eDP-1 only in m1/m2 and initial m3;
+  both outputs active in m3-p1r (capture metadata).
 - Hyprland 0.56 has a **Lua config**: `hyprctl dispatch` takes Lua, e.g.
   `hyprctl dispatch 'hl.dsp.focus({ workspace = "empty" })'` (the old
   `hyprctl dispatch workspace N` is a Lua syntax error). Boot: systemd-boot + UKI
@@ -123,28 +145,97 @@ next to the terminal).
   (`/lib/modules/7.2.11-arch1-1`), or the default boot entry.
 - A synthetic burst client is kept as the ground-truth control (exact frame cost and timing).
 
+## Research direction and publication gates (2026-11-04)
+
+**Candidate contribution:** a kernel scheduler that controls in-flight background GPU work
+and sleeper placement to improve real interactive presentation latency while retaining
+throughput, fairness, and starvation protection. The decisive question is whether the full
+policy earns its complexity compared with a simple global one-job limit.
+
+**Evidence so far:** reducing a cooperating hog from two jobs in flight to one roughly
+halves typical GPU start latency in m3 (~14–15 to ~5–6 ms), at ~5% hog throughput cost.
+This is a client-side intervention, not a hardware result for `sched_policy=3`. The
+simulator's 59.9 → 16.26 development score (~73% reduction) is a custom simulation metric,
+not a measured desktop responsiveness improvement. Existing measurements use one laptop,
+one compositor, mostly synthetic victims and typically three run repetitions; frame
+counts alone do not establish statistical significance across independent sessions.
+
+**Novelty must be checked before expanding the design.** Queue-depth limiting and GPU
+interference protection have prior art. Start with Linux's
+[V3D queue-depth rationale](https://docs.kernel.org/gpu/v3d.html),
+[TimeGraph](https://www.usenix.org/conference/usenixatc11/timegraph-gpu-scheduling-real-time-multi-tasking-environments),
+and the [upstream fair vruntime fixes discussion](https://mail-archive.com/dri-devel@lists.freedesktop.org/msg635635.html).
+These are starting points, not a completed related-work survey. Separate the empty-pop
+accounting mechanism in our report from known upstream races/fixes, and pin the exact
+commits tested. A regression in an old fair version is insufficient as the main novelty.
+
+**Required comparisons:** FIFO, upstream fair with applicable fixes, a simple global
+one-job-in-flight limit, and the full policy. Keep stock fair as a historical baseline
+where useful. A cooperating `vk-hog1` alone is not the global-limit baseline: the latter
+must enforce its limit in the kernel without client changes, with treatment of HIGH and
+KERNEL work documented. Use the same kernel base and settings for causal comparisons.
+
+**Full-paper gates:**
+- [ ] Demonstrate the kernel policy on unmodified real victims: application launches,
+  scrolling and animations, with heavy GL/Vulkan loads, tiny-job floods and video controls.
+- [ ] Report first-frame presentation latency and missed refreshes as primary outcomes,
+  alongside GPU start latency, hog throughput, fairness, starvation and overhead. Resolve
+  compositor pacing sufficiently to distinguish GPU gains from presentation gains.
+- [ ] Ablate in-flight limiting, sleeper credit/aging, hog classification and compositor
+  prediction/holds. Establish which mechanisms improve the latency–throughput tradeoff
+  beyond the simple limit; remove complexity that does not earn its place.
+- [ ] Use independent run/session repetitions, randomized or counterbalanced policy order,
+  controlled boot/session state and confidence intervals. Choose repetition counts for
+  the precision needed; do not treat correlated frames as independent runs or draw strong
+  p99 claims from 60 first frames. Hold out workloads used to evaluate the final policy.
+- [ ] Seek a second hardware configuration, ideally another GPU generation, while retaining
+  Hyprland scope. If unavailable, state the single-machine limitation and narrow the claim.
+- [ ] Release scripts, pinned source/patches, workload settings, analysis and shareable trace
+  data sufficient to reproduce the paper's figures.
+
+**Submission decision:** first complete a reproducible measurement study and assess fit for
+a workshop/short paper. Pursue a full systems submission once the kernel policy shows a
+defensible benefit over the simple limit on real presentation outcomes, with the gates
+above addressed. If the simple limit explains the gains, publish that narrower result
+with appropriate novelty and scope rather than claiming the full policy is necessary.
+
 ## Next (to-do, in order)
 
 Root steps are for the user; give commands with absolute paths.
 
-1. **Compositor pacing** (found in m2): with any other client rendering, burst frames are
-   presented a refresh later (p50 50 vs 33 ms at 60 Hz; ~0.8 vs ~0.4 missed vblanks per
-   frame), even under vkmark where the GPU wait is 0.26 ms. Hypothesis: Hyprland renders
-   right after each vblank while another surface is updating, so a commit arriving a few ms
-   after the frame callback waits a whole refresh. Check from the trace (Hyprland's job
-   times vs `drm_vblank_event` vs the victim's commit = `t_present`) and Hyprland's
-   render-timing options. It belongs in the baseline, and in phase 2's compositor model.
-2. **Optional: policy 1 right after a fresh boot (root, the user; ~7 min).** `m3-p1r`
+1. **Novelty and baseline specification (no root, the agent).** Review the related work
+   above and current upstream fair fixes; record exact commits, distinguish known bugs
+   from our mechanism, and specify the kernel-enforced global one-job baseline and its
+   priority treatment. This determines the minimum policy and hardware comparisons needed.
+2. **Real application and measurement study:** real burst sources (1.3b), mpv as a video
+   victim/load (1.4), and the CPU-load control (1.5), then the report (1.6). Include
+   presentation outcomes and an independent-run statistical plan from the publication gates.
+   Finish this study before deciding whether to submit a workshop/short paper.
+3. **Targeted pacing follow-up:** the existing-trace investigation is complete; see
+   `trace/reports/compositor-pacing.md`. Before attributing presentation changes to
+   scheduling, record the exact Hyprland/Mesa builds and render options, verify a single
+   active output, and trace actual Wayland commit/receipt/latch plus buffer/fence readiness.
+   Compare idle/vkmark with matched geometry and repeated independent sessions. The present
+   API call is not the actual commit timestamp. This needs new capture instrumentation;
+   the existing traces cannot resolve which buffer the next Hyprland job sampled.
+4. Phase 2 inputs found so far: GFXOFF exit (~1.0 ms before the command buffer starts plus
+   ~0.4 ms slower first job, after ≥ 100 ms idle; the sim has no GFXOFF model), Hyprland job
+   cost (p50 0.29 ms, eDP-1 only), credit_limit 2 as the binding mechanism, the compositor
+   pacing above, and DPM auto's steady exec for light work (0.68–0.97 vs 0.62 ms at high).
+
+5. **Optional: policy 1 right after a fresh boot (root, the user; ~7 min).** `m3-p1r`
    (2026-10-20) was meant to be this but ran in a 13 h old boot with 3 suspend/resumes, so
-   the boot-age confound in 1.5 is still open (≤ ~1 ms on FIFO's numbers, no conclusion
-   depends on it). If wanted: `reboot` (no edit), log in, start nothing else, don't suspend,
+   the boot-age and second-display confounds in 1.5 are still open. If wanted: disable
+   or unplug DP-1, `reboot` (no edit), log in, start nothing else, do not suspend,
+   verify `hyprctl monitors -j` lists only eDP-1,
    check `cat /sys/module/gpu_sched/parameters/sched_policy` is 1, then
    ```
    sudo DPMS=auto HOGS="none vk-hog vk-hog1 gl-hog vkmark-cube" /home/jinho/Projects/drm-gpu-scheduling/trace/matrix.sh m3-p1f
    ```
    and `python3 trace/join.py -q traces/m3-p1f/*/*/`, `python3 trace/compare.py
    p1f=traces/m3-p1f p1r=traces/m3-p1r p2=traces/m3-p2 p0=traces/m3-p0`. If p1f's none
-   baseline is 0.16 ms with Hyprland at ~1.04 ms/job, the gap was the boot.
+   baseline is 0.16 ms with Hyprland at ~1.04 ms/job, session/setup state explains
+   the gap; p1r alone cannot separate boot age from output count.
    - How sched_policy is switched (kept for phase 4): it is read-only at runtime (0444) and
      amdgpu is in the initramfs, so a one-off kernel command line edit in systemd-boot
      (Secure Boot off, so the UKI accepts it; nothing persists):
@@ -153,12 +244,6 @@ Root steps are for the user; give commands with absolute paths.
    - Hog names are checked by `matrix.sh` now (the first p1 run had typos, `traces/m3-p1-badhog/`
      is not data). The GPU timestamp offset can jump between runs (seen only in the 15 h
      boot of 2026-10-19): `join.py` re-aligns loose runs on the fences.
-3. Real burst sources (1.3b), mpv as a video victim/load (1.4), the CPU-load control (1.5),
-   then the report (1.6).
-4. Phase 2 inputs found so far: GFXOFF exit (~1.0 ms before the command buffer starts plus
-   ~0.4 ms slower first job, after ≥ 100 ms idle; the sim has no GFXOFF model), Hyprland job
-   cost (p50 0.29 ms, eDP-1 only), credit_limit 2 as the binding mechanism, the compositor
-   pacing above, and DPM auto's steady exec for light work (0.68–0.97 vs 0.62 ms at high).
 
 ---
 
@@ -437,10 +522,11 @@ input → client CPU → CS ioctl → [dep wait] → [sched wait: queued, not ye
   - **glmark2-terrain is no longer a heavy hog**: windowed on eDP-1 it runs ~1.2–1.7 ms/frame
     (the 7.2 ms in 1.4 was measured with two displays), so its wait is ~2.4 ms (≈ 2 jobs).
     `gl-hog` (terrain off-screen at 3840×2160, 8.5 ms, 119 fps) replaces it as the heavy GL hog.
-  - **Compositor pacing dominates steady presentation under any load**: f1+ latency p50 is
+  - **m2 compositor/presentation pacing dominates steady presentation**: f1+ latency p50 is
     50 ms (3 refreshes) for every hog, including vkmark with 0.26 ms GPU wait, vs 33.5 ms
     alone; missed vblanks per frame ~0.8 vs ~0.4. GPU scheduling adds on top: the vk-hog
-    p99 of 100 ms and frame 0's +10 ms. Next, item 3.
+    p99 of 100 ms and frame 0's +10 ms. The later pacing study shows this is not
+    universal across m3 runs; see `trace/reports/compositor-pacing.md` and Next 3.
   - DPM auto vs high for light work on an idle GPU: 0.97 vs 0.62 ms exec (m1: 0.74 vs 0.65;
     varies by run, 0.68–0.97). Under load clocks are up and exec is the same.
   - **`m3` (2026-10-19): `sched_policy` 1 (FIFO) / 2 (fair) / 0 (RR)**, DPM auto, GFXOFF on,
@@ -506,13 +592,17 @@ input → client CPU → CS ioctl → [dep wait] → [sched wait: queued, not ye
     boots (none runs: p1r 26–31 jobs/s at 1.32 ms p50, p1 23–28/s at 1.24–1.50, p2/p0
     20–22/s at 1.04; under vk-hog 1.67 vs 1.31), and its share of the victim's wait is
     0.31–0.43 vs 0.16 ms/frame idle. Hyprland's per-job cost should not depend on the
-    drm_sched policy, so the likely cause is session state (what is on screen / Hyprland
-    after hours and resumes), but policy 1 and boot age are still confounded. It moves the
+    drm_sched policy, so session state is a possible cause. The pacing audit also found
+    DP-1 active in every p1r metadata file: policy, boot age, and output count are confounded. It moves the
     FIFO numbers by ≤ ~1 ms and changes none of the conclusions above. Settling it needs
-    policy 1 right after a fresh boot (Next 2, optional).
-  - Presentation: f1+ p50 stays ~50 ms under any load and all policies (compositor pacing,
-    Next 1). The p99 differences (67–100 ms) are one refresh apart and noisy with 3 runs.
-- [ ] 1.6 Report: latency-breakdown plots per scenario (publish as an artifact page).
+    eDP-1 alone and policy 1 right after a fresh boot (Next 5, optional).
+  - Presentation (corrected by the 2026-11-04 pacing audit): vkmark f1+ p50 is
+    ~34 ms in m3-p2 and two m3-p0 runs, ~50 ms in the other m3-p0 run and m3-p1r.
+    Thus ~50 ms is not universal across loads/policies; see the pacing report and Next 3.
+    The p99 differences (67–100 ms) are one refresh apart and noisy with 3 runs.
+- [ ] 1.6 Measurement report: latency-breakdown and presentation plots per scenario,
+  independent-run uncertainty, confounds, related-work comparison and reproducible artifact.
+  Assess a workshop/short-paper submission using the research-direction gates above.
 
 ## Phase 2: fit the simulator (reuses the phase 1 traces)
 
@@ -521,19 +611,25 @@ input → client CPU → CS ioctl → [dep wait] → [sched wait: queued, not ye
   bandwidth, GTT penalty) from the traces.
 - [ ] 2.3 Fit client *models*, not timestamp replays (a FIFO trace bakes in FIFO's feedback):
   per-job cost distribution, jobs/frame, CPU think time, first-frame multiplier, burst shape.
-- [ ] 2.4 Add a DPM clock-ramp model to `engine.py` from the `gpu_metrics` samples.
+- [ ] 2.4 Model measured GFXOFF wake-up and DPM effects using calibration execution times;
+  use coarse `gpu_metrics` samples as supporting evidence, not an instantaneous ramp trace.
 - [ ] 2.5 Rebuild `scenarios.py` around the real workloads (Hyprland animations, the benchmarks, mpv).
-- [ ] 2.6 Validate: sim-FIFO vs real-FIFO (and sim-fair vs real `sched_policy=2`) on wait-time and
-  frame-time distributions.
+- [ ] 2.6 Validate sim-FIFO and sim-fair against matching hardware versions on wait-time and
+  frame-time distributions. Model fair's actual delayed runtime accounting and empty-pop
+  path; distinguish stock 7.2.11 from the fixed upstream baseline.
 - [ ] 2.7 Re-score all baselines and `policy.py`. If the ranking FIFO > fair > policy holds,
-  go to phase 3. If it flips or the margin collapses, re-run the agent loop (`program.md`)
-  on the fitted sim first.
+  compare with a simple global one-job limit before phase 3. If the ranking flips or the
+  margin collapses, revisit the mechanisms on the fitted sim first. Simulator ranking
+  guides implementation; it does not establish the paper's hardware claim.
 
 ## Phase 3: side-by-side test kernel
 
 - [ ] 3.1 Package `linux-drmsched`: Arch's 7.2.11 PKGBUILD with `pkgbase` renamed, its own
   boot entry; the stock kernel stays the default.
-- [ ] 3.2 Port `policy.py` to C as `sched_policy=3` in `drivers/gpu/drm/scheduler`: fixed-point
+- [ ] 3.1b Implement the kernel-enforced global one-job baseline and applicable upstream
+  fair fixes on the same test-kernel base. Pin patches and document credit/priority rules;
+  retain the stock kernel and default boot entry untouched.
+- [ ] 3.2 Port the selected policy from the fitted simulator to C as `sched_policy=3` in `drivers/gpu/drm/scheduler`: fixed-point
   instead of floats, hrtimer to re-run selection after a hold, per-entity state in
   `drm_sched_entity` (fine here because amdgpu is rebuilt in the same tree), hooks at
   push/run/free/entity_init and fence deadline.
@@ -545,11 +641,23 @@ input → client CPU → CS ioctl → [dep wait] → [sched wait: queued, not ye
 
 ## Phase 4: hardware A/B
 
-- [ ] 4.1 Re-run the phase 1 matrix with `sched_policy` 1 / 2 / 3 on the test kernel.
-- [ ] 4.2 Success: burst sched wait + ring wait shrink with policy 3, while the hog keeps
+- [ ] 4.1 Re-run the phase 1 matrix on the same test-kernel base: FIFO, fixed upstream fair,
+  global one-job limit and full policy (stock fair/RR as additional historical controls).
+  Include real application victims, independent repetitions, controlled session state,
+  counterbalanced policy order and confidence intervals for paired comparisons.
+- [ ] 4.1b Run the mechanism ablations specified above. Compare presentation latency and
+  missed refreshes at matched throughput costs, not just a custom aggregate score.
+- [ ] 4.1c Repeat key experiments on a second hardware configuration if available; otherwise
+  explicitly limit generalization to the tested system.
+- [ ] 4.2 Success: improve real first-frame presentation latency/missed refreshes and the
+  latency–throughput tradeoff over the simple global limit and fixed fair. Also require
+  burst sched wait + ring wait to shrink, while the hog keeps
   ≥ 90% of its frame rate, two hogs stay fair (Jain ≥ 0.95), a mimic gets ≤ 55% of the
   contended GPU, and no job waits > 250 ms (NORMAL) / 1 s (LOW).
-- [ ] 4.3 Final report; update README (kernel version, `sched_policy=3`, results).
+- [ ] 4.3 Final report and conference submission decision against the publication gates;
+  release the reproducible artifact and update README (kernel versions, patches, results).
+  State supported claims and limitations; if only the simple limit is justified, report
+  that result without attributing its gains to the full policy.
 
 ## Open questions and risks
 
@@ -568,7 +676,8 @@ input → client CPU → CS ioctl → [dep wait] → [sched wait: queued, not ye
   off-screen `gl-hog`). Windowed glmark2/vkmark still take the workspace size (1904×1163).
 - **Two displays** were connected until `m1`: eDP-1 1920x1200 @ 60 Hz and DP-1 2560x1440
   @ 75 Hz, i.e. two vblank grids. The policy predicts a single compositor grid. Experiments
-  now run on eDP-1 only (DP-1 unplugged); keep it that way unless testing multi-monitor on
-  purpose. `meta.txt` records the setup.
+  used eDP-1 only in m1/m2/initial m3, but all m3-p1r metadata files list DP-1 active
+  again. Verify eDP-1 alone before future captures unless testing multi-monitor on purpose.
+  `meta.txt` records the setup.
 - Hyprland's own animations are compositor (HIGH) work, so they are not NORMAL bursts; client-side
   animations (GTK, Firefox, burst_client) are the NORMAL-burst case.

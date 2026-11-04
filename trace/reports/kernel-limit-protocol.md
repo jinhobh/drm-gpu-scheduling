@@ -77,7 +77,13 @@ original total credit bound. Track reservation release through completion,
 cancellation, entity destruction and reset. Do not infer isolation or fairness
 from the combined cap invariant alone.
 
-## Minimum-two clamp: audit before implementing
+## Minimum-two clamp: source audit completed, runtime checks pending
+
+The [2026-11-04 source/history audit](amdgpu-submission-audit.md) identifies the
+introducing commit, verifies the pinned downstream Arch sources and maps the
+allocation, direct-submission and recovery dependencies. The
+[separately named package scaffold](../kernel/README.md) is available; no
+admission patch, kernel build or runtime validation is claimed.
 
 The v7.2.11 parameter-validation code explicitly clamps
 `amdgpu_sched_hw_submission` to at least two and rounds it to a power of two.
@@ -86,9 +92,10 @@ ring allocation; `amdgpu_fence_driver_init_ring()` uses that field for fence-slo
 allocation. Scheduler initialization separately copies the field into
 `args.credit_limit`. Therefore the global parameter is not a scheduler-only knob.
 
-The historical reason for the minimum and the complete set of direct/recovery
-path assumptions are **not yet established** by this review. Inspect the introducing
-commit and subsequent fence/ring/reset users before relying on one. Preserve the
+Introducing commit `5d5bd5e32e6e` specifies minimum two but does not explain its
+hardware rationale. The static audit identifies direct/recovery paths that the
+patch must handle; their progress and safety under the new cap still require
+implementation review and runtime validation. Preserve the
 existing physical ring/fence capacity for both experimental modes, changing only
 gfx scheduler admission. Do not remove the driver-wide clamp. A scheduler-only
 limit is not declared safe merely because physical allocation is unchanged.

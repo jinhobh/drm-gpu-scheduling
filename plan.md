@@ -127,7 +127,23 @@ Update the **Status** and **Next** sections whenever a step finishes.
   withdrawn-proposal context and internal-state/provenance limitations.
   **Not sent; no new hardware capture or kernel change.** Raw traces remain
   local; prepare a reviewed sharing bundle and recheck upstream before sending.
-- Phases 2–4: not started.
+- **Minimum-two source audit done; test-kernel scaffold added (2026-11-04,
+  Next 1 partial).** See [the audit](trace/reports/amdgpu-submission-audit.md)
+  and [build handoff](trace/kernel/README.md). Found the clamp's introducing
+  commit `5d5bd5e32e6e`: it specifies minimum two without a hardware rationale.
+  Verified Arch's pinned release archive/patch/config checksums and zero-fuzz
+  patch application; all 14 audited scheduler/AMDGPU files are unchanged by
+  Arch's patch. Keep global capacity/ring storage/fence slots unchanged.
+  Identified generic and AMDGPU-specific completion/reset/direct-signal paths
+  that separate per-job admission reservations must cover. Added a pinned
+  `linux-drmsched` PKGBUILD with distinct module release, config-drift and
+  release guards. Rootless Kconfig/release checks passed, but missing Rust
+  silently drops config options (now rejected). `makepkg` dependency check
+  stops on missing `bc`, `rust`, `rust-bindgen`, `rust-src`. **No admission patch,
+  kernel/module compile, package build/install, boot entry or hardware validation
+  yet.** Stock kernel/default boot and simulator/policies unchanged.
+- Phase 3: source audit/package scaffold started; phase 2 fitting and phase 4
+  hardware A/B not started.
 
 **Tooling (all in `trace/`, captures in `traces/`, gitignored):**
 | file | what it does |
@@ -267,8 +283,13 @@ is prepared. Sending is a separate user action; recheck upstream and arrange
 raw-trace sharing as described in its handoff before sending.
 
 1. **Kernel experiment track; do not wait for real-app presentation tooling.**
-   Audit why AMDGPU clamps the global submission parameter to two and its fence/
-   ring allocation dependencies before relying on one. Build a separately named,
+   The [minimum-two source/history audit](trace/reports/amdgpu-submission-audit.md)
+   is complete; the minimum's hardware rationale remains undocumented, so retain
+   the clamp and physical capacity. Implement/review admission reservation,
+   selection and invariant tracing against the audit's lifecycle requirements.
+   The [pinned package scaffold](trace/kernel/README.md) is ready for preparation
+   once the user installs `bc`, `rust`, `rust-bindgen`, `rust-src` (root command in
+   the handoff). Compile a separately named,
    opt-in test kernel, retaining the stock kernel/default entry. First cap combined
    NORMAL/LOW unfinished jobs at one per measured gfx scheduler, with HIGH/KERNEL
    exempt from the extra cap and the original total credits unchanged. A total
@@ -715,9 +736,14 @@ if the hardware study identifies a need for adaptive policy modelling.
 
 ## Phase 3: side-by-side test kernel
 
-- [ ] 3.1 Package `linux-drmsched`: Arch's 7.2.11 PKGBUILD with `pkgbase` renamed, its own
-  boot entry; the stock kernel stays the default.
-- [ ] 3.1b Audit the minimum-two clamp and implement opt-in gfx admission modes
+- [~] 3.1 Package `linux-drmsched`: pinned Arch 7.2.11 recipe scaffold added in
+  `trace/kernel/`, with renamed `pkgbase`, distinct module release and config/release
+  guards. Source/config checks done; build dependencies, kernel/module compilation,
+  package build and its own boot entry remain pending. The stock kernel stays the default.
+- [x] 3.1a Audit minimum-two history and ring/fence/scheduler dependencies;
+  [report](trace/reports/amdgpu-submission-audit.md), pinned Arch source verification
+  and checksum manifest complete. This is a static prerequisite, not runtime safety validation.
+- [ ] 3.1b Implement opt-in gfx admission modes
   per `trace/reports/kernel-limit-protocol.md`. First test NORMAL/LOW cap one with
   HIGH/KERNEL exempt, then the distinct all-priority credit-limit-one diagnostic.
   Keep hardware fence slots, ring allocation and non-gfx engines unchanged. Test

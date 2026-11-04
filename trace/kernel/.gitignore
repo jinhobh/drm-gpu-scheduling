@@ -1,0 +1,5 @@
+/src/
+/pkg/
+/linux-*
+/config.x86_64
+/*.log

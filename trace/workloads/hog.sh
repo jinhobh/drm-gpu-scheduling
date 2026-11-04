@@ -16,11 +16,13 @@
 #   vk-hog1           vk-hog with 1 frame in flight instead of 2: the ring holds at most one
 #                     of its jobs, what the policy's one-NORMAL-job-on-the-ring rule would do
 #   vkmark-cube       Vulkan, job flood: ~0.03-0.05 ms jobs at ~29 000 fps
+#   mpv               local clip (MPV_CLIP), software decode, Vulkan gpu-next;
+#                     MPV_LOG is optional JSONL playback diagnostics
 #   none              sleep
 #
 #   trace/workloads/hog.sh --names    prints the valid names
 set -u
-names="gl-hog glmark2-terrain glmark2-refract stk vk-hog vk-hog1 vkmark-cube none"
+names="gl-hog glmark2-terrain glmark2-refract stk vk-hog vk-hog1 vkmark-cube mpv none"
 here=$(cd "$(dirname "$0")" && pwd)
 size=${HOG_SIZE:-1280x1000}  # vk-hog floats at this size: keep it inside the 1920x1200 panel
 case ${1:-} in
@@ -34,6 +36,7 @@ vk-hog) exec "$here/../burst_client/burst_client" --present mailbox --pace fifo 
 vk-hog1) exec "$here/../burst_client/burst_client" --present mailbox --pace fifo -i 0 -n 1000 \
             --inflight 1 -c "${HOG_COST_US:-8000}" --size "$size" -o "${HOG_LOG:-/dev/null}" ;;
 vkmark-cube) exec vkmark --run-forever -b cube -p mailbox --size "$size" ;;
+mpv) exec "$here/video.sh" ;;
 none) exec sleep infinity ;;
 --names) echo "$names" ;;
 *) echo "usage: hog.sh ${names// /|}" >&2; exit 2 ;;

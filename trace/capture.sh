@@ -38,6 +38,7 @@ hypr=$(ls -t "$rt/hypr" 2>/dev/null | head -1)
 as_user() {
     sudo -u "$SUDO_USER" env XDG_RUNTIME_DIR="$rt" WAYLAND_DISPLAY="$wl" \
         HYPRLAND_INSTANCE_SIGNATURE="$hypr" DISPLAY="${DISPLAY:-:0}" CAPTURE_OUT="$out" \
+        MPV_CLIP="${MPV_CLIP:-}" \
         PATH="/usr/local/bin:/usr/bin:/bin" HOME="$(getent passwd "$SUDO_USER" | cut -d: -f6)" "$@"
 }
 
@@ -58,6 +59,25 @@ card=$(ls -d /sys/class/drm/card[0-9]/device | head -1)
 for m in json.load(sys.stdin):
     print("  %s %dx%d @ %.3f Hz vrr=%s" % (m["name"], m["width"], m["height"], m["refreshRate"], m["vrr"]))' || true
 } > "$out/meta.txt"
+
+# Preserve machine-readable geometry and exact userspace versions for new studies.
+# Unsupported options are recorded as errors rather than silently assumed defaults.
+as_user hyprctl monitors -j > "$out/monitors.json" 2>&1 || true
+as_user hyprctl version > "$out/hyprland-version.txt" 2>&1 || true
+{
+    pacman -Q linux linux-headers mesa vulkan-radeon hyprland firefox zenity mpv wtype 2>&1 || true
+    git -C "$repo" rev-parse HEAD
+    git -C "$repo" diff --stat
+    cat /proc/cmdline
+    cat /proc/sys/kernel/random/boot_id
+    cat /proc/uptime
+} > "$out/provenance.txt"
+{
+    for option in animations:enabled render:new_render_scheduling render:render_ahead_of_time render:render_ahead_safezone; do
+        echo "$option"
+        as_user hyprctl getoption "$option" 2>&1 || true
+    done
+} > "$out/render-options.txt"
 
 events=(
     -e gpu_scheduler

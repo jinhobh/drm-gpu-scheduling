@@ -93,6 +93,19 @@ Update the **Status** and **Next** sections whenever a step finishes.
   with other engines unchanged. A NORMAL/LOW-only cap is a separate ablation.
   This completes the source/specification task, not kernel implementation or
   novelty clearance for a full paper. Simulator/policies and stock kernel unchanged.
+- **Real-application study tooling added (2026-11-04, Next 1 partial).**
+  `trace/workloads/real.py` scripts GTK4 Zenity launches, isolated-profile Firefox
+  scrolling on a local fixture, Hyprland workspace animations, and local mpv
+  playback, with optional GPU load and CPU-only workers. Logs monotonic action
+  times, map observations, client geometry/IDs and CPU pressure; guards single
+  eDP-1 output, checks Firefox focus before input, and restores workspace/owned
+  processes. Added mpv victim/load diagnostics and capture build/render/boot
+  provenance. See [the capture and statistical protocol](trace/reports/real-study-protocol.md).
+  Headless orchestration checks and mpv diagnostic integration passed. **GUI pilots
+  and new root captures are pending:** both eDP-1 and DP-1 are currently active,
+  so the prerequisite guard rejects the current setup. Map observations and mpv
+  counters are not presentation timestamps; real-app presentation instrumentation,
+  attribution analysis and the 1.6 report remain unfinished. No new hardware claims.
 - Phases 2–4: not started.
 
 **Tooling (all in `trace/`, captures in `traces/`, gitignored):**
@@ -115,6 +128,8 @@ Update the **Status** and **Next** sections whenever a step finishes.
 | `fair_sleepers.py` | `python3 trace/fair_sleepers.py RUN...`: read-only check of frame-0 stalls, overtaking vkmark queue exhaustion, queued work at release, and nearest HIGH Hyprland submission; see `trace/reports/fair-sleepers.md` |
 | `compare.py` | `python3 trace/compare.py [LABEL=]MATRIX[,MATRIX]...`: after join.py, per hog × matrix: start latency f0/f1+ p50/p99, presented − intended, Hyprland ms/frame, hog fps and job time |
 | `matrix.sh` | root: `sudo trace/matrix.sh [NAME]`: traced `burst.sh` runs for each hog × DPM condition × `REPS`, plus a `--calib` run per condition, shuffled; restores DPM auto / GFXOFF on exit; rejects unknown `HOGS` names up front; `DRY=1` prints the order |
+| `workloads/real.py` | real victim/control runner: `gtk-launch`, `firefox-scroll`, `compositor`, `mpv`; optional `--hog`/`--cpu-workers`; `--check` validates prerequisites; action/map/geometry/CPU-pressure JSONL, isolated Firefox profile; see the real-study protocol |
+| `workloads/video.sh`, `video-stats.lua` | local-file mpv playback, explicit software decode + Vulkan gpu-next; 100 ms playback diagnostic samples; also `hog.sh mpv` with `MPV_CLIP` |
 
 Captures so far: `traces/gonogo/20261018-031904` (GL only, vkmark crashed),
 `traces/gonogo/20261018-032454` (GL + Vulkan, vkmark cube). Both: FIFO, DPM auto, two displays.
@@ -221,11 +236,18 @@ with appropriate novelty and scope rather than claiming the full policy is neces
 
 Root steps are for the user; give commands with absolute paths.
 
-1. **Real application and measurement study (agent tooling first; root captures by
-   the user):** real burst sources (1.3b), mpv as a video victim/load (1.4), and
-   the CPU-load control (1.5), then the report (1.6). Include presentation outcomes
-   and an independent-run statistical plan from the publication gates. Finish
-   this study before deciding whether to submit a workshop/short paper.
+1. **Pilot and capture the real-application study (tooling is ready for pilots;
+   root captures by the user):** follow
+   [the commands and independent-session statistical plan](trace/reports/real-study-protocol.md).
+   Unplug/disable DP-1, verify eDP-1 alone, run `real.py ... --check`, then short
+   no-root pilots for GTK launches, Firefox scrolling, compositor animations and
+   local mpv. Validate geometry/focus and GPU load survival before root captures;
+   add CPU-only and CPU+GPU control cells. The installed versions have changed
+   since m3 (current Hyprland v0.56.2); do not mix old/new builds as causal repeats.
+   Presentation instrumentation (Next 3) is needed before presentation claims.
+   Analyse the resulting real-app traces (1.3b/1.4/1.5), then write the 1.6 report;
+   tooling and a prospective protocol do not complete the measurement study or
+   justify a workshop/short-paper submission decision.
 2. **Carry the completed baseline specification into phases 2–4:**
    [review/spec](trace/reports/novelty-baselines.md). Use v7.2.11 FIFO, fair with
    its already merged race fix, `fifo-global1-gfx` and the selected full policy
@@ -407,9 +429,14 @@ input → client CPU → CS ioctl → [dep wait] → [sched wait: queued, not ye
     are loose while a hog runs; `burst.sh` probes before starting the hog. The join with the
     trace (Next, item 3) must confirm `gpu_start` lies inside `[t_run, t_done]`.
   - wp_presentation clock is CLOCK_MONOTONIC (checked at startup).
-- [ ] 1.3b Real burst sources, driven by scripts (`ydotool`, `hyprctl dispatch`, `wtype`):
+- [~] 1.3b Real burst sources, driven by scripts (`ydotool`, `hyprctl dispatch`, `wtype`):
   GTK app launches, Firefox smooth scroll, Hyprland window/workspace animations (compositor
   work, HIGH: a separate case from client bursts).
+  Tooling added 2026-11-04: `workloads/real.py`, local `scroll.html`; GTK4 Zenity
+  launch/map observations, isolated Firefox + wtype Page Down/Up, Hyprland workspace
+  transitions. Single-output/focus guards, owned-process cleanup, monotonic action
+  logs and geometry snapshots. GUI pilots/captures, first-presentation measurement
+  and real-app per-action trace attribution still pending; mapping is not presentation.
 - [x] 1.4 Background and comparison loads, `trace/workloads/hog.sh` (frame cost at 1280×1400,
   uncapped):
   - **Heavy hogs**: `glmark2-terrain` (GL, ~7.2 ms/frame), `glmark2-refract` (GL, ~7.0 ms),
@@ -420,7 +447,11 @@ input → client CPU → CS ioctl → [dep wait] → [sched wait: queued, not ye
   - `stk` (supertuxkart AI race, `--profile-time`) runs 114 fps but is **CPU-bound**: gfx only
     ~30% busy (~2.6 ms GPU/frame). A game comparison load, not a heavy hog. It ignores SIGINT
     (`burst.sh` escalates to TERM/KILL).
-  - Still to add: mpv on a local clip as a video victim/load.
+  - mpv local-clip victim/load tooling added 2026-11-04: `workloads/video.sh`,
+    `video-stats.lua`, `hog.sh mpv` (`MPV_CLIP`), and `real.py mpv` / `--hog mpv
+    --load-clip ...`. Explicit software decode/Vulkan gpu-next; diagnostic drop/
+    mistiming counters are not per-frame presentation feedback. Headless Lua
+    integration validated; Wayland GUI pilot and traced video comparison pending.
 - [~] First no-root results (burst_client logs only, no kernel trace; FIFO, DPM auto, 20
   bursts × 10 frames, 300 ms idle, 736 iters; `traces/burst-noroot/20261018-*`). Per frame:
   start_lat = gpu_start − t_submit, latency = presented − t_intended (ms, p50):

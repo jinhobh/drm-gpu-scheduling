@@ -1,0 +1,842 @@
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
+index ea9a6ed..2aa1e65 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
+@@ -2379,6 +2379,17 @@ static int amdgpu_device_fw_loading(struct amdgpu_device *adev)
+ 	return r;
+ }
+ 
++/* Experimental, initialization-only gfx scheduler controls. Physical ring and
++ * fence allocations, other engines and the global submission clamp are intact.
++ */
++static unsigned int amdgpu_sched_gfx_admission;
++module_param_named(sched_gfx_admission, amdgpu_sched_gfx_admission, uint, 0444);
++MODULE_PARM_DESC(sched_gfx_admission, "Gfx admission: 0=off, 1=NORMAL/LOW one job, 2=total credit one (experimental)");
++
++static unsigned int amdgpu_sched_gfx_selection;
++module_param_named(sched_gfx_selection, amdgpu_sched_gfx_selection, uint, 0444);
++MODULE_PARM_DESC(sched_gfx_selection, "Gfx selection: 0=stock, 1=skip only extra-cap-blocked heads (experimental)");
++
+ static int amdgpu_device_init_schedulers(struct amdgpu_device *adev)
+ {
+ 	struct drm_sched_init_args args = {
+@@ -2390,6 +2401,11 @@ static int amdgpu_device_init_schedulers(struct amdgpu_device *adev)
+ 	long timeout;
+ 	int r, i;
+ 
++	if (amdgpu_sched_gfx_admission > 2 || amdgpu_sched_gfx_selection > 1) {
++		dev_err(adev->dev, "Invalid experimental gfx admission/selection mode\n");
++		return -EINVAL;
++	}
++
+ 	for (i = 0; i < AMDGPU_MAX_RINGS; ++i) {
+ 		struct amdgpu_ring *ring = adev->rings[i];
+ 
+@@ -2414,6 +2430,20 @@ static int amdgpu_device_init_schedulers(struct amdgpu_device *adev)
+ 
+ 		args.timeout = timeout;
+ 		args.credit_limit = ring->num_hw_submission;
++		args.bg_job_limit = 0;
++		args.skip_cap = false;
++		if (ring->funcs->type == AMDGPU_RING_TYPE_GFX) {
++			if (amdgpu_sched_gfx_admission == 1)
++				args.bg_job_limit = 1;
++			else if (amdgpu_sched_gfx_admission == 2)
++				args.credit_limit = 1;
++			args.skip_cap = amdgpu_sched_gfx_selection == 1;
++			dev_info(adev->dev,
++				 "drmsched experiment ring=%s admission=%u selection=%u physical=%u credits=%u bg_limit=%u\n",
++				 ring->name, amdgpu_sched_gfx_admission,
++				 amdgpu_sched_gfx_selection, ring->num_hw_submission,
++				 args.credit_limit, args.bg_job_limit);
++		}
+ 		args.score = ring->sched_score;
+ 		args.name = ring->name;
+ 
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
+index 14b539d..33387c4 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
+@@ -244,7 +244,8 @@ int amdgpu_wbrf = -1;
+ int amdgpu_damage_clips = -1; /* auto */
+ int amdgpu_umsch_mm_fwlog;
+ int amdgpu_rebar = -1; /* auto */
+-int amdgpu_user_queue = -1;
++/* Test kernel: keep measured rendering on the scheduler path by default. */
++int amdgpu_user_queue;
+ uint amdgpu_hdmi_hpd_debounce_delay_ms;
+ int amdgpu_ptl = -1; /* auto */
+ 
+@@ -1100,7 +1101,7 @@ module_param_named(rebar, amdgpu_rebar, int, 0444);
+  * -  1 = user queues enabled and kernel queues enabled (if supported)
+  * -  2 = user queues enabled and kernel queues disabled
+  */
+-MODULE_PARM_DESC(user_queue, "Enable user queues (-1 = auto (default), 0 = disable, 1 = enable, 2 = enable UQs and disable KQs)");
++MODULE_PARM_DESC(user_queue, "Enable user queues (-1 = auto, 0 = disable (test-kernel default), 1 = enable, 2 = enable UQs and disable KQs)");
+ module_param_named(user_queue, amdgpu_user_queue, int, 0444);
+ 
+ /*
+diff --git a/drivers/gpu/drm/scheduler/gpu_scheduler_trace.h b/drivers/gpu/drm/scheduler/gpu_scheduler_trace.h
+index 261713d..5404a38 100644
+--- a/drivers/gpu/drm/scheduler/gpu_scheduler_trace.h
++++ b/drivers/gpu/drm/scheduler/gpu_scheduler_trace.h
+@@ -151,6 +151,104 @@ TRACE_EVENT(drm_sched_job_unschedulable,
+ 		      __entry->ctx, __entry->seqno)
+ );
+ 
++/* Experimental diagnostics, deliberately separate from the stable events. */
++TRACE_EVENT(drm_sched_admission,
++	TP_PROTO(struct drm_sched_fence *f, int action, u64 serial, u32 count),
++	TP_ARGS(f, action, serial, count),
++	TP_STRUCT__entry(
++		__string(dev, dev_name(f->sched->dev))
++		__string(ring, f->sched->name)
++		__field(u64, context)
++		__field(u64, seqno)
++		__field(u64, client_id)
++		__field(u64, serial)
++		__field(u32, count)
++		__field(u32, credits)
++		__field(u32, limit)
++		__field(int, priority)
++		__field(int, action)
++		__field(int, error)
++	),
++	TP_fast_assign(
++		__assign_str(dev);
++		__assign_str(ring);
++		__entry->context = f->finished.context;
++		__entry->seqno = f->finished.seqno;
++		__entry->client_id = f->drm_client_id;
++		__entry->serial = serial;
++		__entry->count = count;
++		__entry->credits = atomic_read(&f->sched->credit_count);
++		__entry->limit = f->sched->credit_limit;
++		__entry->priority = f->admission_priority;
++		__entry->action = action;
++		__entry->error = READ_ONCE(f->finished.error);
++	),
++	TP_printk("dev=%s ring=%s fence=%llu:%llu client_id=%llu serial=%llu action=%d priority=%d count=%u credits=%u limit=%u error=%d",
++		__get_str(dev), __get_str(ring), __entry->context,
++		__entry->seqno, __entry->client_id, __entry->serial,
++		__entry->action, __entry->priority, __entry->count,
++		__entry->credits, __entry->limit, __entry->error)
++);
++
++TRACE_EVENT(drm_sched_admission_dispatch,
++	TP_PROTO(struct drm_sched_job *job),
++	TP_ARGS(job),
++	TP_STRUCT__entry(
++		__string(dev, dev_name(job->sched->dev))
++		__string(ring, job->sched->name)
++		__field(u64, context)
++		__field(u64, seqno)
++		__field(u64, reservation)
++		__field(u32, bg_limit)
++		__field(u32, credits)
++		__field(u32, limit)
++		__field(int, priority)
++	),
++	TP_fast_assign(
++		__assign_str(dev);
++		__assign_str(ring);
++		__entry->context = job->s_fence->finished.context;
++		__entry->seqno = job->s_fence->finished.seqno;
++		__entry->reservation = job->s_fence->admission_acquire;
++		__entry->bg_limit = job->sched->bg_job_limit;
++		__entry->credits = atomic_read(&job->sched->credit_count);
++		__entry->limit = job->sched->credit_limit;
++		__entry->priority = job->s_priority;
++	),
++	TP_printk("dev=%s ring=%s fence=%llu:%llu reservation=%llu bg_limit=%u credits=%u limit=%u priority=%d",
++		__get_str(dev), __get_str(ring), __entry->context,
++		__entry->seqno, __entry->reservation, __entry->bg_limit,
++		__entry->credits, __entry->limit, __entry->priority)
++);
++
++TRACE_EVENT(drm_sched_admission_select,
++	TP_PROTO(struct drm_gpu_scheduler *sched, u32 examined, u32 skipped,
++		 int reason, int priority, u64 duration_ns),
++	TP_ARGS(sched, examined, skipped, reason, priority, duration_ns),
++	TP_STRUCT__entry(
++		__string(dev, dev_name(sched->dev))
++		__string(ring, sched->name)
++		__field(u32, examined)
++		__field(u32, skipped)
++		__field(int, reason)
++		__field(int, priority)
++		__field(u64, duration_ns)
++	),
++	TP_fast_assign(
++		__assign_str(dev);
++		__assign_str(ring);
++		__entry->examined = examined;
++		__entry->skipped = skipped;
++		__entry->reason = reason;
++		__entry->priority = priority;
++		__entry->duration_ns = duration_ns;
++	),
++	TP_printk("dev=%s ring=%s examined=%u skipped=%u reason=%d priority=%d duration_ns=%llu",
++		__get_str(dev), __get_str(ring), __entry->examined,
++		__entry->skipped, __entry->reason, __entry->priority,
++		__entry->duration_ns)
++);
++
+ #endif /* _GPU_SCHED_TRACE_H_ */
+ 
+ /* This part must be outside protection */
+diff --git a/drivers/gpu/drm/scheduler/sched_internal.h b/drivers/gpu/drm/scheduler/sched_internal.h
+index a901801..1748fcc 100644
+--- a/drivers/gpu/drm/scheduler/sched_internal.h
++++ b/drivers/gpu/drm/scheduler/sched_internal.h
+@@ -38,7 +38,7 @@ extern int drm_sched_policy;
+ #define DRM_SCHED_POLICY_FIFO  1
+ #define DRM_SCHED_POLICY_FAIR  2
+ 
+-bool drm_sched_can_queue(struct drm_gpu_scheduler *sched,
++int drm_sched_can_queue(struct drm_gpu_scheduler *sched,
+ 			 struct drm_sched_entity *entity);
+ void drm_sched_wakeup(struct drm_gpu_scheduler *sched);
+ 
+diff --git a/drivers/gpu/drm/scheduler/sched_main.c b/drivers/gpu/drm/scheduler/sched_main.c
+index 214ed02..7366a6b 100644
+--- a/drivers/gpu/drm/scheduler/sched_main.c
++++ b/drivers/gpu/drm/scheduler/sched_main.c
+@@ -109,17 +109,18 @@ static u32 drm_sched_available_credits(struct drm_gpu_scheduler *sched)
+  * @sched: scheduler instance
+  * @entity: the scheduler entity
+  *
+- * Return true if we can push at least one more job from @entity, false
+- * otherwise.
++ * Return 0 when eligible, -ENOENT with no head, -ENOSPC for original total
++ * credits, or -EAGAIN for the additional NORMAL/LOW cap. Test total credits
++ * first: skipped-head selection must never bypass an original credit failure.
+  */
+-bool drm_sched_can_queue(struct drm_gpu_scheduler *sched,
++int drm_sched_can_queue(struct drm_gpu_scheduler *sched,
+ 			 struct drm_sched_entity *entity)
+ {
+ 	struct drm_sched_job *s_job;
+ 
+ 	s_job = drm_sched_entity_queue_peek(entity);
+ 	if (!s_job)
+-		return false;
++		return -ENOENT;
+ 
+ 	/* If a job exceeds the credit limit, truncate it to the credit limit
+ 	 * itself to guarantee forward progress.
+@@ -130,7 +131,13 @@ bool drm_sched_can_queue(struct drm_gpu_scheduler *sched,
+ 		s_job->credits = sched->credit_limit;
+ 	}
+ 
+-	return drm_sched_available_credits(sched) >= s_job->credits;
++	if (drm_sched_available_credits(sched) < s_job->credits)
++		return -ENOSPC;
++	if (sched->bg_job_limit &&
++	    s_job->s_priority >= DRM_SCHED_PRIORITY_NORMAL &&
++	    READ_ONCE(sched->bg_inflight) >= sched->bg_job_limit)
++		return -EAGAIN;
++	return 0;
+ }
+ 
+ /**
+@@ -153,6 +160,76 @@ static void drm_sched_run_free_queue(struct drm_gpu_scheduler *sched)
+ 		queue_work(sched->submit_wq, &sched->work_free_job);
+ }
+ 
++/* Lifetime follows the scheduler finished fence, not the entity or HW callback.
++ * Reset stop/start may detach HW callbacks without finishing a job. They must
++ * not drop/reacquire this reservation. Direct error signaling releases it too.
++ */
++static void drm_sched_admission_release(struct drm_sched_fence *f, int action)
++{
++	struct drm_gpu_scheduler *sched = f->sched;
++	unsigned long flags;
++
++	spin_lock_irqsave(&sched->admission_lock, flags);
++	if (!WARN_ON_ONCE(!sched->bg_inflight))
++		WRITE_ONCE(sched->bg_inflight, sched->bg_inflight - 1);
++	trace_drm_sched_admission(f, action, ++sched->admission_serial,
++				sched->bg_inflight);
++	spin_unlock_irqrestore(&sched->admission_lock, flags);
++	drm_sched_run_job_queue(sched);
++	dma_fence_put(&f->finished); /* dispatch callback reference */
++}
++
++static void drm_sched_admission_done(struct dma_fence *f,
++				     struct dma_fence_cb *cb)
++{
++	struct drm_sched_fence *s_fence =
++		container_of(cb, struct drm_sched_fence, admission_cb);
++
++	drm_sched_admission_release(s_fence, 1);
++}
++
++static void drm_sched_admission_acquire(struct drm_sched_job *job)
++{
++	struct drm_gpu_scheduler *sched = job->sched;
++	struct drm_sched_fence *f = job->s_fence;
++	unsigned long flags;
++
++	if (!sched->bg_job_limit || job->s_priority < DRM_SCHED_PRIORITY_NORMAL)
++		return;
++
++	/* Only work_run_job acquires, and a work item never runs concurrently
++	 * with itself. Selection and dispatch use the same immutable job priority.
++	 */
++	f->admission_priority = job->s_priority;
++	f->admission_tracked = true;
++	dma_fence_get(&f->finished);
++	spin_lock_irqsave(&sched->admission_lock, flags);
++	WRITE_ONCE(sched->bg_inflight, sched->bg_inflight + 1);
++	WARN_ON_ONCE(sched->bg_inflight > sched->bg_job_limit);
++	f->admission_acquire = ++sched->admission_serial;
++	trace_drm_sched_admission(f, 0, f->admission_acquire,
++				sched->bg_inflight);
++	spin_unlock_irqrestore(&sched->admission_lock, flags);
++
++	/* Never take the finished-fence lock under admission_lock: completion
++	 * calls us with the fence lock held. -ENOENT means it already finished.
++	 */
++	if (dma_fence_add_callback(&f->finished, &f->admission_cb,
++				   drm_sched_admission_done))
++		drm_sched_admission_release(f, 1);
++}
++
++static void drm_sched_admission_cleanup(struct drm_sched_fence *f)
++{
++	/* remove_callback synchronizes with a running callback under fence->lock.
++	 * No job pointer is used by the callback; it owns a separate fence ref.
++	 * Cleanup is the fallback for a canceled job freed without signaling.
++	 */
++	if (f->admission_tracked &&
++	    dma_fence_remove_callback(&f->finished, &f->admission_cb))
++		drm_sched_admission_release(f, 2);
++}
++
+ /**
+  * drm_sched_job_done - complete a job
+  * @s_job: pointer to the job which is done
+@@ -846,6 +923,7 @@ void drm_sched_job_cleanup(struct drm_sched_job *job)
+ 	unsigned long index;
+ 
+ 	if (kref_read(&job->s_fence->finished.refcount)) {
++		drm_sched_admission_cleanup(job->s_fence);
+ 		/* The job has been processed by the scheduler, i.e.,
+ 		 * drm_sched_job_arm() and drm_sched_entity_push_job() have
+ 		 * been called.
+@@ -1051,6 +1129,8 @@ static void drm_sched_run_job_work(struct work_struct *w)
+ 	s_fence = sched_job->s_fence;
+ 
+ 	atomic_add(sched_job->credits, &sched->credit_count);
++	drm_sched_admission_acquire(sched_job);
++	trace_drm_sched_admission_dispatch(sched_job);
+ 	drm_sched_job_begin(sched_job);
+ 
+ 	trace_drm_sched_job_run(sched_job, entity);
+@@ -1113,6 +1193,8 @@ int drm_sched_init(struct drm_gpu_scheduler *sched, const struct drm_sched_init_
+ 
+ 	sched->ops = args->ops;
+ 	sched->credit_limit = args->credit_limit;
++	sched->bg_job_limit = args->bg_job_limit;
++	sched->skip_cap = args->skip_cap;
+ 	sched->name = args->name;
+ 	sched->timeout = args->timeout;
+ 	sched->hang_limit = args->hang_limit;
+@@ -1163,6 +1245,9 @@ int drm_sched_init(struct drm_gpu_scheduler *sched, const struct drm_sched_init_
+ 	init_waitqueue_head(&sched->job_scheduled);
+ 	INIT_LIST_HEAD(&sched->pending_list);
+ 	spin_lock_init(&sched->job_list_lock);
++	spin_lock_init(&sched->admission_lock);
++	sched->bg_inflight = 0;
++	sched->admission_serial = 0;
+ 	atomic_set(&sched->credit_count, 0);
+ 	INIT_DELAYED_WORK(&sched->work_tdr, drm_sched_job_timedout);
+ 	INIT_WORK(&sched->work_run_job, drm_sched_run_job_work);
+diff --git a/drivers/gpu/drm/scheduler/sched_rq.c b/drivers/gpu/drm/scheduler/sched_rq.c
+index 23f46ec..295da58 100644
+--- a/drivers/gpu/drm/scheduler/sched_rq.c
++++ b/drivers/gpu/drm/scheduler/sched_rq.c
+@@ -8,6 +8,7 @@
+ #include <drm/gpu_scheduler.h>
+ 
+ #include "sched_internal.h"
++#include "gpu_scheduler_trace.h"
+ 
+ static __always_inline bool
+ drm_sched_entity_compare_before(struct rb_node *a, const struct rb_node *b)
+@@ -393,26 +394,42 @@ drm_sched_rq_select_entity(struct drm_gpu_scheduler *sched,
+ 			   struct drm_sched_rq *rq)
+ {
+ 	struct rb_node *rb;
++	struct drm_sched_entity *selected = NULL;
++	bool tracing = trace_drm_sched_admission_select_enabled();
++	u64 start = tracing ? ktime_get_ns() : 0;
++	u32 examined = 0, skipped = 0;
++	int reason = -ENOENT, priority = DRM_SCHED_PRIORITY_INVALID;
+ 
+ 	spin_lock(&rq->lock);
+ 	for (rb = rb_first_cached(&rq->rb_tree_root); rb; rb = rb_next(rb)) {
+ 		struct drm_sched_entity *entity;
+ 
++		examined++;
+ 		entity = rb_entry(rb, struct drm_sched_entity, rb_tree_node);
+ 		if (drm_sched_entity_is_ready(entity)) {
+ 			/* If we can't queue yet, preserve the current entity in
+ 			 * terms of fairness.
+ 			 */
+-			if (!drm_sched_can_queue(sched, entity)) {
+-				spin_unlock(&rq->lock);
+-				return ERR_PTR(-ENOSPC);
++			reason = drm_sched_can_queue(sched, entity);
++			if (reason) {
++				if (reason == -EAGAIN && sched->skip_cap) {
++					skipped++;
++					continue;
++				}
++				selected = ERR_PTR(-ENOSPC);
++				break;
+ 			}
+ 
++			selected = entity;
++			priority = drm_sched_entity_queue_peek(entity)->s_priority;
+ 			reinit_completion(&entity->entity_idle);
+ 			break;
+ 		}
+ 	}
+ 	spin_unlock(&rq->lock);
+ 
+-	return rb ? rb_entry(rb, struct drm_sched_entity, rb_tree_node) : NULL;
++	if (tracing)
++		trace_drm_sched_admission_select(sched, examined, skipped, reason,
++						priority, ktime_get_ns() - start);
++	return selected;
+ }
+diff --git a/drivers/gpu/drm/scheduler/tests/Makefile b/drivers/gpu/drm/scheduler/tests/Makefile
+index 9ec185f..4bd8d87 100644
+--- a/drivers/gpu/drm/scheduler/tests/Makefile
++++ b/drivers/gpu/drm/scheduler/tests/Makefile
+@@ -3,6 +3,7 @@
+ drm-sched-tests-y := \
+         mock_scheduler.o \
+         tests_basic.o \
+-        tests_scheduler.o
++        tests_scheduler.o \
++        tests_admission.o
+ 
+ obj-$(CONFIG_DRM_SCHED_KUNIT_TEST) += drm-sched-tests.o
+diff --git a/drivers/gpu/drm/scheduler/tests/mock_scheduler.c b/drivers/gpu/drm/scheduler/tests/mock_scheduler.c
+index 2dfa3ef..8249660 100644
+--- a/drivers/gpu/drm/scheduler/tests/mock_scheduler.c
++++ b/drivers/gpu/drm/scheduler/tests/mock_scheduler.c
+@@ -175,6 +175,16 @@ static struct dma_fence *mock_sched_run_job(struct drm_sched_job *sched_job)
+ 		       sched->hw_timeline.context,
+ 		       atomic_inc_return(&sched->hw_timeline.next_seqno));
+ 
++	if (job->flags & DRM_MOCK_SCHED_JOB_RUN_ERROR)
++		return ERR_PTR(-EIO);
++	if (job->flags & DRM_MOCK_SCHED_JOB_RUN_NULL)
++		return NULL;
++	if (job->flags & DRM_MOCK_SCHED_JOB_RUN_SIGNALED) {
++		dma_fence_get(&job->hw_fence); /* free_job reference */
++		dma_fence_signal(&job->hw_fence);
++		return &job->hw_fence;
++	}
++
+ 	dma_fence_get(&job->hw_fence); /* Reference for the job_list */
+ 
+ 	spin_lock_irq(&sched->lock);
+diff --git a/drivers/gpu/drm/scheduler/tests/sched_tests.h b/drivers/gpu/drm/scheduler/tests/sched_tests.h
+index 553d45a..77bf149 100644
+--- a/drivers/gpu/drm/scheduler/tests/sched_tests.h
++++ b/drivers/gpu/drm/scheduler/tests/sched_tests.h
+@@ -97,6 +97,9 @@ struct drm_mock_sched_job {
+ #define DRM_MOCK_SCHED_JOB_TIMEDOUT		0x2
+ #define DRM_MOCK_SCHED_JOB_DONT_RESET		0x4
+ #define DRM_MOCK_SCHED_JOB_RESET_SKIPPED	0x8
++#define DRM_MOCK_SCHED_JOB_RUN_ERROR	0x10
++#define DRM_MOCK_SCHED_JOB_RUN_NULL	0x20
++#define DRM_MOCK_SCHED_JOB_RUN_SIGNALED	0x40
+ 	unsigned long		flags;
+ 
+ 	struct list_head	link;
+diff --git a/drivers/gpu/drm/scheduler/tests/tests_admission.c b/drivers/gpu/drm/scheduler/tests/tests_admission.c
+new file mode 100644
+index 0000000..3cafb71
+--- /dev/null
++++ b/drivers/gpu/drm/scheduler/tests/tests_admission.c
+@@ -0,0 +1,326 @@
++// SPDX-License-Identifier: GPL-2.0
++/* Tests for the opt-in gfx admission experiment; no hardware required. */
++#include <linux/delay.h>
++#include "sched_tests.h"
++
++static int admission_init(struct kunit *test)
++{
++	struct drm_mock_scheduler *s = drm_mock_sched_new(test, MAX_SCHEDULE_TIMEOUT);
++
++	s->base.credit_limit = 4;
++	s->base.bg_job_limit = 1;
++	test->priv = s;
++	return 0;
++}
++
++static void admission_exit(struct kunit *test)
++{
++	if (test->priv)
++		drm_mock_sched_fini(test->priv);
++}
++
++static struct drm_mock_sched_job *submit(struct kunit *test,
++					struct drm_mock_sched_entity *e)
++{
++	struct drm_mock_sched_job *j = drm_mock_sched_job_new(test, e);
++
++	drm_mock_sched_job_submit(j);
++	return j;
++}
++
++static void scheduled(struct kunit *test, struct drm_mock_sched_job *j)
++{
++	KUNIT_ASSERT_TRUE(test, drm_mock_sched_job_wait_scheduled(j, HZ));
++}
++
++static void admission_pipeline_off(struct kunit *test)
++{
++	struct drm_mock_scheduler *s = test->priv;
++	struct drm_mock_sched_entity *e;
++	struct drm_mock_sched_job *a, *b;
++
++	s->base.bg_job_limit = 0;
++	s->base.skip_cap = true; /* With admission off, skipping has no effect. */
++	e = drm_mock_sched_entity_new(test, DRM_SCHED_PRIORITY_NORMAL, s);
++	a = submit(test, e);
++	b = submit(test, e);
++	scheduled(test, a);
++	scheduled(test, b);
++	KUNIT_EXPECT_EQ(test, s->base.bg_inflight, 0);
++	KUNIT_EXPECT_EQ(test, drm_mock_sched_advance(s, 2), 2);
++	drm_mock_sched_entity_free(e);
++}
++
++static void admission_combined_cap(struct kunit *test)
++{
++	struct drm_mock_scheduler *s = test->priv;
++	struct drm_mock_sched_entity *n, *l;
++	struct drm_mock_sched_job *a, *b;
++
++	n = drm_mock_sched_entity_new(test, DRM_SCHED_PRIORITY_NORMAL, s);
++	l = drm_mock_sched_entity_new(test, DRM_SCHED_PRIORITY_LOW, s);
++	a = submit(test, n);
++	scheduled(test, a);
++	b = submit(test, l);
++	flush_workqueue(s->base.submit_wq);
++	KUNIT_EXPECT_FALSE(test, dma_fence_is_signaled(&b->base.s_fence->scheduled));
++	KUNIT_EXPECT_EQ(test, s->base.bg_inflight, 1);
++	KUNIT_EXPECT_EQ(test, drm_mock_sched_advance(s, 1), 1);
++	scheduled(test, b); /* Completion must wake the blocked victim. */
++	KUNIT_EXPECT_EQ(test, s->base.bg_inflight, 1);
++	KUNIT_EXPECT_EQ(test, drm_mock_sched_advance(s, 1), 1);
++	flush_workqueue(s->base.submit_wq);
++	KUNIT_EXPECT_EQ(test, s->base.bg_inflight, 0);
++	drm_mock_sched_entity_free(n);
++	drm_mock_sched_entity_free(l);
++}
++
++static void admission_exempt(struct kunit *test)
++{
++	struct drm_mock_scheduler *s = test->priv;
++	struct drm_mock_sched_entity *n, *h, *k;
++
++	n = drm_mock_sched_entity_new(test, DRM_SCHED_PRIORITY_NORMAL, s);
++	h = drm_mock_sched_entity_new(test, DRM_SCHED_PRIORITY_HIGH, s);
++	k = drm_mock_sched_entity_new(test, DRM_SCHED_PRIORITY_KERNEL, s);
++	scheduled(test, submit(test, n));
++	scheduled(test, submit(test, h));
++	scheduled(test, submit(test, k));
++	KUNIT_EXPECT_EQ(test, s->base.bg_inflight, 1);
++	KUNIT_EXPECT_EQ(test, atomic_read(&s->base.credit_count), 3);
++	KUNIT_EXPECT_EQ(test, drm_mock_sched_advance(s, 3), 3);
++	drm_mock_sched_entity_free(n);
++	drm_mock_sched_entity_free(h);
++	drm_mock_sched_entity_free(k);
++}
++
++static void admission_all_blocked_skip(struct kunit *test)
++{
++	struct drm_mock_scheduler *s = test->priv;
++
++	s->base.skip_cap = true;
++	admission_combined_cap(test);
++}
++
++static void admission_priority_snapshot(struct kunit *test)
++{
++	struct drm_mock_scheduler *s = test->priv;
++	struct drm_mock_sched_entity *n;
++	struct drm_mock_sched_job *a;
++
++	n = drm_mock_sched_entity_new(test, DRM_SCHED_PRIORITY_NORMAL, s);
++	a = submit(test, n);
++	scheduled(test, a);
++	drm_sched_entity_set_priority(&n->base, DRM_SCHED_PRIORITY_HIGH);
++	/* The dispatched job retains its original class even after entity teardown. */
++	drm_mock_sched_entity_free(n);
++	KUNIT_EXPECT_EQ(test, s->base.bg_inflight, 1);
++	KUNIT_EXPECT_EQ(test, drm_mock_sched_advance(s, 1), 1);
++	flush_workqueue(s->base.submit_wq);
++	KUNIT_EXPECT_EQ(test, s->base.bg_inflight, 0);
++}
++
++static void admission_stop_start(struct kunit *test)
++{
++	struct drm_mock_scheduler *s = test->priv;
++	struct drm_mock_sched_entity *n;
++
++	n = drm_mock_sched_entity_new(test, DRM_SCHED_PRIORITY_NORMAL, s);
++	scheduled(test, submit(test, n));
++	drm_sched_stop(&s->base, NULL);
++	KUNIT_EXPECT_EQ(test, s->base.bg_inflight, 1);
++	KUNIT_EXPECT_EQ(test, atomic_read(&s->base.credit_count), 0);
++	KUNIT_EXPECT_EQ(test, drm_mock_sched_advance(s, 1), 1);
++	/* No parent after stop: start cancels and finishes the pending job. */
++	drm_sched_start(&s->base, -ECANCELED);
++	flush_workqueue(s->base.submit_wq);
++	KUNIT_EXPECT_EQ(test, s->base.bg_inflight, 0);
++	KUNIT_EXPECT_EQ(test, atomic_read(&s->base.credit_count), 0);
++	drm_mock_sched_entity_free(n);
++}
++
++static void admission_direct_finish(struct kunit *test)
++{
++	struct drm_mock_scheduler *s = test->priv;
++	struct drm_mock_sched_entity *n;
++	struct drm_mock_sched_job *a;
++
++	n = drm_mock_sched_entity_new(test, DRM_SCHED_PRIORITY_NORMAL, s);
++	a = submit(test, n);
++	scheduled(test, a);
++	drm_sched_wqueue_stop(&s->base);
++	dma_fence_set_error(&a->base.s_fence->finished, -EHWPOISON);
++	dma_fence_signal(&a->base.s_fence->finished);
++	KUNIT_EXPECT_EQ(test, s->base.bg_inflight, 0);
++	/* Hardware completion after exceptional finished signaling releases no
++	 * second reservation. Keep workers stopped until the HW callback ends.
++	 */
++	KUNIT_EXPECT_EQ(test, drm_mock_sched_advance(s, 1), 1);
++	KUNIT_EXPECT_EQ(test, s->base.bg_inflight, 0);
++	drm_sched_wqueue_start(&s->base);
++	flush_workqueue(s->base.submit_wq);
++	drm_mock_sched_entity_free(n);
++}
++
++static void admission_stop_start_rearm(struct kunit *test)
++{
++	struct drm_mock_scheduler *s = test->priv;
++	struct drm_mock_sched_entity *n;
++	struct drm_mock_sched_job *j;
++
++	n = drm_mock_sched_entity_new(test, DRM_SCHED_PRIORITY_NORMAL, s);
++	j = submit(test, n);
++	scheduled(test, j);
++	drm_sched_stop(&s->base, NULL);
++	KUNIT_EXPECT_EQ(test, s->base.bg_inflight, 1);
++	/* Simulate recovery retaining a valid hardware fence, without the mock
++	 * backend's incompatible duplicate list insertion during resubmission.
++	 */
++	j->base.s_fence->parent = dma_fence_get(&j->hw_fence);
++	drm_sched_start(&s->base, 0);
++	KUNIT_EXPECT_EQ(test, s->base.bg_inflight, 1);
++	KUNIT_EXPECT_EQ(test, atomic_read(&s->base.credit_count), 1);
++	KUNIT_EXPECT_EQ(test, drm_mock_sched_advance(s, 1), 1);
++	flush_workqueue(s->base.submit_wq);
++	KUNIT_EXPECT_EQ(test, s->base.bg_inflight, 0);
++	drm_mock_sched_entity_free(n);
++}
++
++static void admission_cleanup_fallback(struct kunit *test)
++{
++	struct drm_mock_scheduler *s = test->priv;
++	struct drm_mock_sched_entity *n;
++
++	n = drm_mock_sched_entity_new(test, DRM_SCHED_PRIORITY_NORMAL, s);
++	scheduled(test, submit(test, n));
++	drm_mock_sched_entity_free(n);
++	drm_sched_stop(&s->base, NULL); /* Detach HW callback without finishing. */
++	drm_mock_sched_fini(s); /* cancel/free must remove admission callback. */
++	KUNIT_EXPECT_EQ(test, s->base.bg_inflight, 0);
++	test->priv = NULL;
++}
++
++static void admission_immediate(struct kunit *test)
++{
++	struct drm_mock_scheduler *s = test->priv;
++	struct drm_mock_sched_entity *n;
++	const unsigned long cases[] = {
++		DRM_MOCK_SCHED_JOB_RUN_ERROR,
++		DRM_MOCK_SCHED_JOB_RUN_NULL,
++		DRM_MOCK_SCHED_JOB_RUN_SIGNALED,
++	};
++	int i;
++
++	n = drm_mock_sched_entity_new(test, DRM_SCHED_PRIORITY_NORMAL, s);
++	for (i = 0; i < ARRAY_SIZE(cases); i++) {
++		struct drm_mock_sched_job *j = drm_mock_sched_job_new(test, n);
++		struct dma_fence *f;
++
++		j->flags |= cases[i];
++		drm_sched_job_arm(&j->base);
++		f = dma_fence_get(&j->base.s_fence->finished);
++		drm_sched_entity_push_job(&j->base);
++		KUNIT_EXPECT_GT(test, dma_fence_wait_timeout(f, false, HZ), 0);
++		flush_workqueue(s->base.submit_wq);
++		KUNIT_EXPECT_EQ(test, s->base.bg_inflight, 0);
++		KUNIT_EXPECT_EQ(test, atomic_read(&s->base.credit_count), 0);
++		KUNIT_EXPECT_EQ(test, dma_fence_get_status(f), i ? 1 : -EIO);
++		dma_fence_put(f);
++	}
++	drm_mock_sched_entity_free(n);
++}
++
++/* Exercise a particular ready-tree shape, independent of fair's placement
++ * heuristic: a cap-blocked NORMAL head precedes a ready HIGH job. No worker
++ * may touch the tree during setup. Production selection still walks it.
++ */
++static void admission_head(struct kunit *test, bool skip, bool total_full)
++{
++	struct drm_mock_scheduler *s = test->priv;
++	struct drm_mock_sched_entity *a, *b, *h;
++	struct drm_mock_sched_job *bj, *hj;
++	struct drm_sched_rq *rq;
++	struct rb_node *root;
++	int i;
++
++	if (s->base.num_rqs != 1) {
++		kunit_skip(test, "Requires fair's single run queue; rerun with sched_policy=2");
++		return;
++	}
++	s->base.skip_cap = skip;
++	s->base.credit_limit = total_full ? 1 : 4;
++	a = drm_mock_sched_entity_new(test, DRM_SCHED_PRIORITY_NORMAL, s);
++	b = drm_mock_sched_entity_new(test, DRM_SCHED_PRIORITY_NORMAL, s);
++	h = drm_mock_sched_entity_new(test, DRM_SCHED_PRIORITY_HIGH, s);
++	scheduled(test, submit(test, a));
++	drm_sched_wqueue_stop(&s->base);
++	bj = submit(test, b);
++	hj = submit(test, h);
++	rq = s->base.sched_rq[0];
++	spin_lock(&rq->lock);
++	rb_erase_cached(&b->base.rb_tree_node, &rq->rb_tree_root);
++	rb_erase_cached(&h->base.rb_tree_node, &rq->rb_tree_root);
++	b->base.oldest_job_waiting = 0;
++	h->base.oldest_job_waiting = 1;
++	rb_link_node(&b->base.rb_tree_node, NULL, &rq->rb_tree_root.rb_root.rb_node);
++	rb_insert_color_cached(&b->base.rb_tree_node, &rq->rb_tree_root, true);
++	root = &b->base.rb_tree_node;
++	rb_link_node(&h->base.rb_tree_node, root, &root->rb_right);
++	rb_insert_color_cached(&h->base.rb_tree_node, &rq->rb_tree_root, false);
++	spin_unlock(&rq->lock);
++	drm_sched_wqueue_start(&s->base);
++	flush_workqueue(s->base.submit_wq);
++	KUNIT_EXPECT_FALSE(test, dma_fence_is_signaled(&bj->base.s_fence->scheduled));
++	KUNIT_EXPECT_EQ(test, dma_fence_is_signaled(&hj->base.s_fence->scheduled),
++			 skip && !total_full);
++	KUNIT_EXPECT_EQ(test, s->base.bg_inflight, 1);
++	/* Drain each hardware job, allowing queued victims to dispatch in between. */
++	for (i = 0; i < 3; i++) {
++		KUNIT_EXPECT_EQ(test, drm_mock_sched_advance(s, 1), 1);
++		flush_workqueue(s->base.submit_wq);
++	}
++	KUNIT_EXPECT_EQ(test, s->base.bg_inflight, 0);
++	drm_mock_sched_entity_free(a);
++	drm_mock_sched_entity_free(b);
++	drm_mock_sched_entity_free(h);
++}
++
++static void admission_head_stock(struct kunit *test)
++{
++	admission_head(test, false, false);
++}
++
++static void admission_head_skip(struct kunit *test)
++{
++	admission_head(test, true, false);
++}
++
++static void admission_total_not_skipped(struct kunit *test)
++{
++	admission_head(test, true, true);
++}
++
++static struct kunit_case admission_cases[] = {
++	KUNIT_CASE(admission_pipeline_off),
++	KUNIT_CASE(admission_combined_cap),
++	KUNIT_CASE(admission_all_blocked_skip),
++	KUNIT_CASE(admission_exempt),
++	KUNIT_CASE(admission_priority_snapshot),
++	KUNIT_CASE(admission_stop_start),
++	KUNIT_CASE(admission_stop_start_rearm),
++	KUNIT_CASE(admission_direct_finish),
++	KUNIT_CASE(admission_cleanup_fallback),
++	KUNIT_CASE(admission_immediate),
++	KUNIT_CASE(admission_head_stock),
++	KUNIT_CASE(admission_head_skip),
++	KUNIT_CASE(admission_total_not_skipped),
++	{}
++};
++
++static struct kunit_suite admission_suite = {
++	.name = "drm_sched_admission",
++	.init = admission_init,
++	.exit = admission_exit,
++	.test_cases = admission_cases,
++};
++kunit_test_suite(admission_suite);
+diff --git a/include/drm/gpu_scheduler.h b/include/drm/gpu_scheduler.h
+index 790f7ec..99a6d74 100644
+--- a/include/drm/gpu_scheduler.h
++++ b/include/drm/gpu_scheduler.h
+@@ -338,6 +338,15 @@ struct drm_sched_fence {
+ 	 * The client_id of the drm_file which owns the job.
+ 	 */
+ 	uint64_t			drm_client_id;
++
++	/** @admission_cb: releases the opt-in admission reservation on finish. */
++	struct dma_fence_cb		admission_cb;
++	/** @admission_priority: immutable armed job priority copied at dispatch. */
++	enum drm_sched_priority		admission_priority;
++	/** @admission_tracked: dispatch installed a finished-fence callback. */
++	bool				admission_tracked;
++	/** @admission_acquire: reservation transition ID, or zero when exempt/off. */
++	u64				admission_acquire;
+ };
+ 
+ struct drm_sched_fence *to_drm_sched_fence(struct dma_fence *f);
+@@ -608,6 +617,16 @@ struct drm_gpu_scheduler {
+ 	const struct drm_sched_backend_ops	*ops;
+ 	u32				credit_limit;
+ 	atomic_t			credit_count;
++	/** @bg_job_limit: combined NORMAL/LOW admission limit; zero disables it. */
++	u32				bg_job_limit;
++	/** @skip_cap: skip ready heads blocked only by the extra admission limit. */
++	bool				skip_cap;
++	/** @admission_lock: serializes reservation transitions and their trace. */
++	spinlock_t			admission_lock;
++	/** @bg_inflight: unfinished, reserved NORMAL/LOW jobs. */
++	u32				bg_inflight;
++	/** @admission_serial: ordered transition ID for trace validation. */
++	u64				admission_serial;
+ 	long				timeout;
+ 	const char			*name;
+ 	u32                             num_rqs;
+@@ -656,6 +675,10 @@ struct drm_sched_init_args {
+ 	struct workqueue_struct *timeout_wq;
+ 	u32 num_rqs;
+ 	u32 credit_limit;
++	/** @bg_job_limit: optional extra NORMAL/LOW job limit, independent of credits. */
++	u32 bg_job_limit;
++	/** @skip_cap: skip only extra-cap failures during selection. */
++	bool skip_cap;
+ 	unsigned int hang_limit;
+ 	long timeout;
+ 	atomic_t *score;

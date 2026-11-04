@@ -47,7 +47,7 @@ card=$(ls -d /sys/class/drm/card[0-9]/device | head -1)
     echo "date: $(date -Is)"
     echo "kernel: $(uname -r)"
     echo "gpu_sched.sched_policy: $(cat /sys/module/gpu_sched/parameters/sched_policy)"
-    for p in user_queue sched_hw_submission moverate; do
+    for p in user_queue sched_hw_submission sched_gfx_admission sched_gfx_selection moverate; do
         echo "amdgpu.$p: $(cat /sys/module/amdgpu/parameters/$p 2>/dev/null || echo n/a)"
     done
     echo "dpm_level: $(cat "$card/power_dpm_force_performance_level")"
@@ -71,6 +71,17 @@ as_user hyprctl version > "$out/hyprland-version.txt" 2>&1 || true
     cat /proc/cmdline
     cat /proc/sys/kernel/random/boot_id
     cat /proc/uptime
+    for module in gpu_sched amdgpu; do
+        path=$(modinfo -n "$module" 2>/dev/null) || continue
+        sha256sum "$path" 2>&1 || true
+    done
+    if [[ -f /usr/lib/modules/$(uname -r)/drmsched-build.txt ]]; then
+        cat "/usr/lib/modules/$(uname -r)/drmsched-build.txt"
+    fi
+    if [[ -r /proc/config.gz ]]; then
+        printf 'running config sha256: '
+        zcat /proc/config.gz | sha256sum
+    fi
 } > "$out/provenance.txt"
 {
     for option in animations:enabled render:new_render_scheduling render:render_ahead_of_time render:render_ahead_safezone; do

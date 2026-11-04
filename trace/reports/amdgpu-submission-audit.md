@@ -172,3 +172,7 @@ and review the admission/selection/lifecycle patch and tracing on this base,
 compile, finish the distinct UKI/boot handoff, then boot and perform recovery/
 suspend checks. Package installation, stock/default-boot preservation checks
 and the hardware experiment remain undone. Simulator and policies are unchanged.
+
+Follow-up (2026-11-04): [the admission/selection prototype](gfx-admission-implementation.md)
+is now implemented and mock/compile-tested. The paragraph above records the audit's
+original handoff; production package/boot and real-device validation are still pending.

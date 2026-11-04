@@ -1,0 +1,3 @@
+# Unified patch context preserves blank lines and space-prefixed source tabs.
+# Check the contained source with kernel checkpatch and the source manifests.
+trace/kernel/*.patch -whitespace

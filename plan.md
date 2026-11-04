@@ -142,7 +142,26 @@ Update the **Status** and **Next** sections whenever a step finishes.
   stops on missing `bc`, `rust`, `rust-bindgen`, `rust-src`. **No admission patch,
   kernel/module compile, package build/install, boot entry or hardware validation
   yet.** Stock kernel/default boot and simulator/policies unchanged.
-- Phase 3: source audit/package scaffold started; phase 2 fitting and phase 4
+- **Gfx admission/selection prototype implemented (2026-11-04, Next 1 partial).**
+  [Patch and recipe](trace/kernel/README.md),
+  [implementation/validation report](trace/reports/gfx-admission-implementation.md)
+  and [recorded evidence](trace/reports/gfx-admission-validation.txt).
+  Boot-only gfx off/bg1/global1 and stock/skip-cap selectors; original physical
+  ring/fence capacity retained, other engines unchanged. Combined NORMAL/LOW
+  reservations follow the finished fence, survive HW callback detach/rearm and
+  release on completion/error/cleanup independently of entity lifetime. Job class
+  is its immutable armed priority; queued jobs are not retagged on entity boosts.
+  Added dispatch/reservation/selection diagnostics and `trace/admission.py`;
+  capture records selectors and module/config/build provenance. Test-kernel user
+  queues default off. Final focused KUnit: 13/13 fair, 10 applicable FIFO passed
+  (3 fair-only skips); x86 scheduler/changed AMDGPU objects compile. 21 Python
+  tests pass. Two upstream UML timing tests also fail on the unmodified base;
+  broader KUnit runs are not wholly green (report has exact counts). Production
+  dependencies/config, full kernel/package build, boot entry, hardware recovery/
+  suspend/soak, self-cost workload cells and captures remain pending. Compile-only
+  x86 config dropped unavailable Rust; it is not the accepted production config.
+  **No package installed, stock/default boot modified, or hardware claim added.**
+- Phase 3: source audit and prototype code/tests implemented; phase 2 fitting and phase 4
   hardware A/B not started.
 
 **Tooling (all in `trace/`, captures in `traces/`, gitignored):**
@@ -163,6 +182,8 @@ Update the **Status** and **Next** sections whenever a step finishes.
 | `join.py` | `python3 trace/join.py RUN...`: 1.2b, burst.csv × trace → `RUN/frames.csv`, per frame: submit / dep / order / pick / credit / ring / wake split of the start latency, `ok` (gpu_start inside [t_run, t_done]), `busy_by` (whose jobs ran on the ring while the frame waited); medians for frame 0 vs 1+, one line per run, pooled per condition; `--trace-only` (automatic without burst.csv) takes the frames from the trace alone; a run whose timestamp correction is looser than 100 µs is re-aligned on the fences (stderr says by how much) |
 | `pacing.py` | `python3 trace/pacing.py RUN... [--csv FILE]`: read-only frame callback / present-call / Hyprland gfx submission / hardware vblank comparison; selects output by presentation MSC and timestamp; see `trace/reports/compositor-pacing.md` |
 | `fair_sleepers.py` | `python3 trace/fair_sleepers.py RUN...`: read-only check of frame-0 stalls, overtaking vkmark queue exhaustion, queued work at release, and nearest HIGH Hyprland submission; see `trace/reports/fair-sleepers.md` |
+| `admission.py` | `python3 trace/admission.py RUN...`: new bg1 captures only; joins dispatch/reservation IDs, validates observed occupancy/credits/priority/serials and trace loss, reports boundary reservations and scan costs; not a global1 or hardware recovery validator |
+| `kernel/` | pinned `linux-drmsched` recipe, admission/selection patch, baseline/patched source manifests and KUnit config; see `kernel/README.md`; production package/boot pending |
 | `compare.py` | `python3 trace/compare.py [LABEL=]MATRIX[,MATRIX]...`: after join.py, per hog × matrix: start latency f0/f1+ p50/p99, presented − intended, Hyprland ms/frame, hog fps and job time |
 | `matrix.sh` | root: `sudo trace/matrix.sh [NAME]`: traced `burst.sh` runs for each hog × DPM condition × `REPS`, plus a `--calib` run per condition, shuffled; restores DPM auto / GFXOFF on exit; rejects unknown `HOGS` names up front; `DRY=1` prints the order |
 | `workloads/real.py` | real victim/control runner: `gtk-launch`, `firefox-scroll`, `compositor`, `mpv`; optional `--hog`/`--cpu-workers`; `--check` validates prerequisites; action/map/geometry/CPU-pressure JSONL, isolated Firefox profile; see the real-study protocol |
@@ -285,17 +306,18 @@ raw-trace sharing as described in its handoff before sending.
 1. **Kernel experiment track; do not wait for real-app presentation tooling.**
    The [minimum-two source/history audit](trace/reports/amdgpu-submission-audit.md)
    is complete; the minimum's hardware rationale remains undocumented, so retain
-   the clamp and physical capacity. Implement/review admission reservation,
-   selection and invariant tracing against the audit's lifecycle requirements.
-   The [pinned package scaffold](trace/kernel/README.md) is ready for preparation
-   once the user installs `bc`, `rust`, `rust-bindgen`, `rust-src` (root command in
-   the handoff). Compile a separately named,
+   the clamp and physical capacity. The [admission/selection patch and tracing](trace/kernel/README.md)
+   are implemented and mock-tested; review the
+   [lifecycle choices and validation limits](trace/reports/gfx-admission-implementation.md).
+   Finish production build dependencies (`bc`, `rust`, `rust-bindgen`, `rust-src`;
+   root command in the handoff) and pin/review any config/toolchain drift before
+   building all arms. Compile/package a separately named,
    opt-in test kernel, retaining the stock kernel/default entry. First cap combined
    NORMAL/LOW unfinished jobs at one per measured gfx scheduler, with HIGH/KERNEL
    exempt from the extra cap and the original total credits unchanged. A total
    `credit_limit=1` is the separate all-priority baseline, not an implementation
-   of exemptions. Use the existing m3 workload/capture/join path; add invariant
-   tracing without changing the m3 controls. FIFO cap off/on keeps stock selection;
+   of exemptions. Use the existing m3 workload/capture/join path and validate
+   the new diagnostics with `trace/admission.py`; retain the m3 controls. FIFO cap off/on keeps stock selection;
    fair compares off/stock, bg1/stock and bg1/skip-cap. Add separate solo multi-job
    and two-NORMAL-client cells to test victim pipelining/self-cost, plus same-session
    `vk-hog1` references. Perform a short recovery and suspend/
@@ -736,29 +758,32 @@ if the hardware study identifies a need for adaptive policy modelling.
 
 ## Phase 3: side-by-side test kernel
 
-- [~] 3.1 Package `linux-drmsched`: pinned Arch 7.2.11 recipe scaffold added in
-  `trace/kernel/`, with renamed `pkgbase`, distinct module release and config/release
-  guards. Source/config checks done; build dependencies, kernel/module compilation,
+- [~] 3.1 Package `linux-drmsched`: pinned Arch 7.2.11 recipe in
+  `trace/kernel/`, with integrated admission patch, before/after source manifests,
+  renamed `pkgbase`, distinct module release and config/release guards. Source
+  and compile-only object checks done; production dependencies/config, full compilation,
   package build and its own boot entry remain pending. The stock kernel stays the default.
 - [x] 3.1a Audit minimum-two history and ring/fence/scheduler dependencies;
   [report](trace/reports/amdgpu-submission-audit.md), pinned Arch source verification
   and checksum manifest complete. This is a static prerequisite, not runtime safety validation.
-- [ ] 3.1b Implement opt-in gfx admission modes
+- [~] 3.1b Opt-in gfx admission/selection prototype and tracing implemented
   per `trace/reports/kernel-limit-protocol.md`. First test NORMAL/LOW cap one with
   HIGH/KERNEL exempt, then the distinct all-priority credit-limit-one diagnostic.
   Keep hardware fence slots, ring allocation and non-gfx engines unchanged. Test
   FIFO off/bg1 with stock selection and fair off/stock, bg1/stock and bg1/skip-cap
   on the exact same binary. Audit skip cost, ordering and completion wakeups;
-  require solo multi-job and two-interactive-client self-cost gates. Do not
-  duplicate the already merged race fix. Complete credit/cancellation/reset and suspend checks.
+  require solo multi-job and two-interactive-client self-cost gates. Mock lifecycle/
+  selection cases pass; real admission/credit/cancellation/reset/suspend and scan-cost
+  checks remain. See the implementation report above. Do not duplicate the merged race fix.
 - [ ] 3.2 **Conditional:** only if hardware results justify extra mechanisms, port
   the smallest selected policy. Prefer investigating changes to fair; a research
   `sched_policy=3` is not a committed upstream interface. Document any prediction,
   hold timers and per-entity state, and ablate their independent benefit.
 - [ ] 3.3 Conditional on a policy port: equivalence test: build the C selection logic as a shared library, drive it from gpusim
   via ctypes, and check it scores the same as `policy.py`.
-- [ ] 3.4 Default `amdgpu.user_queue=0` on this kernel. Add tracepoints if phase 1 found gaps
-  (e.g. actual HW start).
+- [~] 3.4 Test-kernel `amdgpu.user_queue=0` default and admission/dispatch/selection
+  tracepoints implemented; verify the setting and events after building/booting.
+  These events do not add an actual-HW-start timestamp.
 - [ ] 3.5 Soak test: GPU hang/timeout recovery, suspend/resume, a day of normal use.
 
 ## Phase 4: hardware A/B

@@ -1,11 +1,11 @@
 # Derived from Arch packaging commit 0c178d550ec6392265d3a443333229823634bd08.
-# Build scaffold only: no admission patch or installation hooks added here.
+# Opt-in admission experiment; no installation or boot hooks added here.
 # Upstream maintainer: Jan Alexander Steffens (heftig) <heftig@archlinux.org>
 
 pkgbase=linux-drmsched
 pkgver=7.2.11.arch1
 pkgrel=1
-pkgdesc='Linux DRM scheduler experiment base (admission unchanged)'
+pkgdesc='Linux DRM scheduler admission experiment (opt-in)'
 url='https://github.com/archlinux/linux'
 arch=(
   x86_64
@@ -42,6 +42,9 @@ _srctag=v${pkgver%.*}-${pkgver##*.}
 source=(
   https://cdn.kernel.org/pub/linux/kernel/v${pkgver%%.*}.x/${_srcname}.tar.{xz,sign}
   $url/releases/download/$_srctag/linux-$_srctag.patch.zst{,.sig}
+  audited-files.sha256
+  0001-gfx-admission.patch
+  patched-files.sha256
 )
 source_x86_64=(
   config.x86_64::https://gitlab.archlinux.org/archlinux/packaging/packages/linux/-/raw/0c178d550ec6392265d3a443333229823634bd08/config.x86_64
@@ -54,14 +57,20 @@ validpgpkeys=(
 b2sums=('36a455379876a3f452dce7347211ac34ddfda9a445b0b8c0ee92664429a8ea85d2f1a101126b6d748545aaf18e3534f8db53d6110952f3d5487d029ff0f9a800'
         'SKIP'
         '06f49715b71884a0cbad51ab4b526c1516926cb2429e7a6e485aa48ebf277811dec391ae2264501245654275a84af1df3780bf8bf8df755cf47670d6c9397703'
-        'SKIP')
+        'SKIP'
+        '63aaf2a42d90a5d1bb0e8dff9d086cfe41c4e9c5a88ba8f48a9bdd501f171b22fd0cba39e1782d29bbdfd80e2011b71970e80075da2882401783e5bc2e389131'
+        'f29fc757b6b985c8e856fb9658de0e1a97910bfa449550a003415ea3486e7d591c3edf359e9081ebb77f510935668e64f92a72a510047b939c6ebb10f05e3e58'
+        'dcf644a39ceb412d29ac4d47cdd640d9949b2639faf6e9629337b283845407e6f99c4177ef25498f09d5e393ef236c24f23cee759b15edb0b455962f515dcc3b')
 b2sums_x86_64=('58babcf7bed396598de1a7c010292aebb56b2c726f9d8d28344049646d5ed814489db0e22a4e62718e5e6dcc94c581858c17b235e88dc3263fa78934d2a84104')
 
 # https://www.kernel.org/pub/linux/kernel/v7.x/sha256sums.asc
 sha256sums=('fd0fc479f983a8c05313f13e9c36330fe6651cf725396748c40d5cd93fa1e6a4'
-            'SKIP'
-            '741d473c4db335d97d9e1d9b8be9337090522550804fe6454ba336d21e580fd6'
-            'SKIP')
+        'SKIP'
+        '741d473c4db335d97d9e1d9b8be9337090522550804fe6454ba336d21e580fd6'
+        'SKIP'
+        '154e70ab08c46d0e3bb282459c674c351adb15d43db1999e82c78f53e40d7acd'
+        '2b3689c06c61147c2366408bf1da0d168d5f95032824fa1fa493688e7860522b'
+        '85b0c5750f38321e3d1308bac97ee2011851f3890ed2aea9807fdfc388f813e3')
 
 export KBUILD_BUILD_HOST=archlinux
 export KBUILD_BUILD_USER=$pkgbase
@@ -80,9 +89,14 @@ prepare() {
     src="${src##*/}"
     src="${src%.zst}"
     [[ $src = *.patch ]] || continue
+    if [[ $src = 0001-gfx-admission.patch ]]; then
+      sha256sum -c ../audited-files.sha256 || return 1
+    fi
     echo "Applying patch $src..."
-    patch -Np1 < "../$src"
+    patch --fuzz=0 -Np1 < "../$src"
   done
+
+  sha256sum -c ../patched-files.sha256 || return 1
 
   echo "Setting config..."
   cp ../config.$CARCH .config
@@ -99,6 +113,12 @@ prepare() {
     error "Unexpected kernel release; refusing a potentially conflicting package"
     return 1
   }
+  {
+    echo "kernel_release=$(<version)"
+    echo "base=v7.2.11-arch1 (64a90897d3c539033f24105968e3513957e70819)"
+    sha256sum .config ../config.$CARCH ../0001-gfx-admission.patch \
+      ../audited-files.sha256 ../patched-files.sha256
+  } > drmsched-build.txt
   echo "Prepared $pkgbase version $(<version)"
 }
 
@@ -107,6 +127,12 @@ build() {
 
   make all
   make -C tools/bpf/bpftool vmlinux.h feature-clang-bpf-co-re=1
+  {
+    "${CC:-gcc}" --version
+    rustc --version
+    bindgen --version
+    sha256sum .config vmlinux "$(make -s image_name)"
+  } >> drmsched-build.txt
 }
 
 _package() {
@@ -125,6 +151,8 @@ _package() {
 
   cd $_srcname
   local modulesdir="$pkgdir/usr/lib/modules/$(<version)"
+
+  install -Dm644 drmsched-build.txt "$modulesdir/drmsched-build.txt"
 
   echo "Installing boot image..."
   # systemd expects to find the kernel here to allow hibernation

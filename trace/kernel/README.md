@@ -1,29 +1,62 @@
-# Opt-in kernel experiment base
+# Opt-in gfx admission kernel
 
-This is a **build scaffold**, derived from Arch's `7.2.11.arch1-1`
-[packaging commit](https://gitlab.archlinux.org/archlinux/packaging/packages/linux/-/tree/0c178d550ec6392265d3a443333229823634bd08).
-It does not yet contain the admission patch, a boot entry, or a built package.
-The [source audit](../reports/amdgpu-submission-audit.md) is the completed prerequisite.
+`0001-gfx-admission.patch` implements the admission/selection prototype on the
+pinned Arch `7.2.11.arch1-1` sources. It is integrated into `PKGBUILD` and has
+passed focused KUnit tests and x86 object compilation. **A production package,
+boot entry and hardware validation are still pending.** See the
+[implementation and validation report](../reports/gfx-admission-implementation.md)
+and the [source audit](../reports/amdgpu-submission-audit.md).
 
-The recipe retains Arch's source URLs, signature keys, source/config checksums,
-kernel config and kernel/header packaging. It changes `pkgbase` to
-`linux-drmsched`, removes documentation builds/dependencies and stock kernel
-module aliases/replacements, and rejects config drift or an unexpected release.
-Expected release: `7.2.11-arch1-1-drmsched`. Modules and the packaged kernel land
-under `/usr/lib/modules/7.2.11-arch1-1-drmsched/`; the headers symlink is
-`/usr/src/linux-drmsched`. It does not provide or replace `linux`.
+The recipe retains Arch's source URLs, signing keys, source/config checksums
+and kernel/header packaging. `pkgbase=linux-drmsched` gives the expected release
+`7.2.11-arch1-1-drmsched`, its own module directory and `/usr/src/linux-drmsched`
+headers link. It does not provide or replace `linux`. Rebuild **the kernel and
+all its modules together**: this patch changes internal scheduler struct layouts.
+Do not copy either module into the stock kernel's directory.
+
+## Controls and experiment arms
+
+Both selectors are read-only module parameters, initialized with the scheduler.
+The module is in the initramfs, so choose them on the test kernel's command line.
+`amdgpu.sched_gfx_admission=0` and `amdgpu.sched_gfx_selection=0` are the defaults.
+
+| Arm | `gpu_sched.sched_policy` | `amdgpu.sched_gfx_admission` | `amdgpu.sched_gfx_selection` |
+|---|---:|---:|---:|
+| fifo/off/stock | 1 | 0 | 0 |
+| fifo/bg1/stock | 1 | 1 | 0 |
+| fair/off/stock | 2 | 0 | 0 |
+| fair/bg1/stock | 2 | 1 | 0 |
+| fair/bg1/skip-cap | 2 | 1 | 1 |
+| fifo/global1/stock (separate diagnostic) | 1 | 2 | 0 |
+
+Admission 1 caps combined NORMAL/LOW **jobs**, including interactive victims,
+per gfx scheduler. HIGH/KERNEL remain exempt from this extra cap and still use
+original total credits. Selection 1 skips only extra-cap failures, never original
+credit failures. Its scan is one tree traversal, O(number of entities), with
+examined/skipped counts and elapsed time traced. It has no fixed microsecond
+bound. Stock selection can block HIGH behind NORMAL in fair; that arm is a
+required diagnostic. Off/skip-cap reduces to stock eligibility.
+
+Admission 2 sets only gfx scheduler credits to one and includes every priority.
+All modes retain the global submission clamp, physical ring/fence capacity and
+other engines' admission. User queues default to **disabled in this test kernel**;
+verify `amdgpu.user_queue=0` before capture. Kernel/direct submissions remain
+outside the scheduler cap. No sleeper-accounting change is included.
+
+The admission class is the job's immutable priority saved by `drm_sched_job_arm`
+(`job->s_priority`), copied into its reservation at dispatch. Changing an entity's
+priority does not retag already armed jobs or change their release decision.
 
 ## Build handoff
 
-On 2026-11-04, `makepkg --nobuild --noconfirm` stopped before source preparation:
-`bc`, `rust`, `rust-bindgen`, and `rust-src` are missing. Installing dependencies
-requires the user's root terminal. This command installs only build prerequisites:
+The host still lacks `bc`, `rust`, `rust-bindgen`, and `rust-src`. Installing
+build dependencies requires the user's root terminal:
 
 ```sh
 sudo pacman -S --needed bc rust rust-bindgen rust-src
 ```
 
-After dependencies are installed, run **without sudo**, from the recipe directory:
+Then run **without sudo**:
 
 ```sh
 cd /home/jinho/Projects/drm-gpu-scheduling/trace/kernel
@@ -32,54 +65,79 @@ makepkg --nobuild
 makepkg --noextract --log
 ```
 
-Signature checking remains enabled. Import missing signing keys after checking
-their fingerprints against the recipe and upstream; do not bypass signature
-verification for the actual build. A config diff is a build failure requiring
-review, rather than permission to silently drop Rust or change drivers. Pin the
-accepted toolchain/config for all experiment arms.
+Signature verification stays enabled for the production build. Import missing
+keys only after checking their fingerprints against the recipe/upstream. The
+recipe verifies `audited-files.sha256` after the Arch patch and before the
+research patch, applies patches with zero fuzz, and verifies
+`patched-files.sha256` afterward. Both manifests and the patch are themselves
+checksum-pinned sources. A config diff or unexpected kernel release aborts.
 
-Before adding research patches, verify the audited files in the prepared tree:
+The pinned Arch config includes Rust 1.99.0 metadata. Installing a newer
+compiler can still cause a config diff. Review and pin any intended toolchain/
+config update once, before building the binary for **all** arms. Do not silently
+disable Rust just to pass preparation. The x86 compile-only checks used an
+isolated config where unavailable Rust options were dropped; they are not an
+accepted production config or completed package build.
+
+A successful build packages `drmsched-build.txt` beside the kernel image. It
+records the base commit, patch/config/manifest hashes, toolchain versions and
+kernel image hashes. `capture.sh` records it, the module artifact hashes and the
+running config hash when available.
+
+## Trace validation
+
+The unchanged m3 harness already enables the whole `gpu_scheduler` event group,
+which includes the new reservation, dispatch and selection diagnostics. For a
+new **bg1** capture:
 
 ```sh
-cd /home/jinho/Projects/drm-gpu-scheduling/trace/kernel/src/linux-7.2.11
-sha256sum -c /home/jinho/Projects/drm-gpu-scheduling/trace/kernel/audited-files.sha256
+python3 /home/jinho/Projects/drm-gpu-scheduling/trace/admission.py /absolute/path/to/run
 ```
 
-Future admission patches will intentionally change some hashes: preserve the
-baseline check before those patches and record both states. Keep the new patch's
-selectors off/stock by default and compare all arms on one binary.
+The checker joins background dispatches to reservation IDs, checks priority
+exemptions, cap/credit bounds, identities and consecutive per-scheduler transition
+serials, and reports scan counts/cost. It rejects lost events and missing dispatch
+instrumentation. Reports can arrive in a different cross-CPU order; serials
+establish reservation order. Normal captures may start/end with a live job; the
+output reports those open boundaries. `--require-drained` rejects them for a
+controlled drained test. This checker does not validate global1, hardware direct
+submissions, fairness, presentation latency or successful reset recovery.
 
-## Installation and boot remain a separate step
+## Reproduce the focused tests
 
-Do not install this baseline as though it implements the experiment. Finish the
-admission patch and compile checks first. A subsequent installation handoff must
-inspect the package file list and the actual boot-loader default, create a
-distinct mkinitcpio preset and boot entry, record stock artifact hashes, and use
-a one-shot test boot. Never overwrite the stock UKI, modules or default entry.
-An automatically selected newest entry is not sufficient protection.
+Use a separate clean source tree: unpack the pinned stable archive, apply the
+Arch patch, verify `audited-files.sha256`, then apply the research patch and
+verify `patched-files.sha256`. Do not generate an in-tree `.config` before the
+out-of-tree KUnit build. With `bc` available, set this path to that source tree:
 
-The local Arch mkinitcpio pacman hook generates a preset from
-`/usr/share/mkinitcpio/hook.preset` for a new `pkgbase`. Its current template
-generates conventional kernel/initramfs files, not this machine's configured UKI.
-Simply renaming `pkgbase` therefore does **not** complete UKI/boot setup.
-No preset, UKI, loader entry, installed module or package was changed here.
+```sh
+drmsched_test_src=/absolute/path/to/clean/patched/linux-7.2.11
+python3 "$drmsched_test_src/tools/testing/kunit/kunit.py" run \
+  --build_dir /home/jinho/Projects/drm-gpu-scheduling/.cache/kunit-admission \
+  --kunitconfig /home/jinho/Projects/drm-gpu-scheduling/trace/kernel/kunitconfig \
+  --jobs 8 --timeout 90 'drm_sched_admission*'
+```
 
-## Validation completed
+Repeat with `--kernel_args 'gpu_sched.sched_policy=2'` before the filter for fair.
+The first invocation uses default FIFO. These UML kernels run as isolated user
+processes; they do not boot the host into the test kernel.
 
-- Recipe passes `bash -n` and `makepkg --printsrcinfo`; split package names are
-  `linux-drmsched` and `linux-drmsched-headers`.
-- Source archive and Arch patch match both upstream recipe SHA-256 and BLAKE2
-  checksums; config matches upstream BLAKE2.
-- Arch patch applies to the official archive with `--fuzz=0`; all 14 audited
-  source hashes match after application.
-- Rootless `olddefconfig` and `kernelrelease` in an ignored audit tree produced
-  `7.2.11-arch1-1-drmsched`. Missing Rust silently changed config in that isolated
-  check; the recipe now rejects that drift.
-- Ran the actual recipe's source preparation in a separate ignored directory
-  with dependency/PGP checks bypassed only for this negative test. Archive,
-  patch and config checksums passed; preparation stopped at the new config-drift
-  guard as expected when Kconfig removed Rust. This does not replace the enabled
-  signature/dependency checks required for a real build.
+## Boot and hardware work remain
 
-These are source/configuration/recipe checks, **not** a successful kernel/module
-compile, package build, boot, recovery test or hardware cap validation.
+Do not install/boot this prototype as though the experiment has passed. The next
+handoff must build/review the complete package, inspect its file list and the
+actual boot-loader default, prepare a distinct mkinitcpio preset and boot entry,
+record stock artifact hashes, and use a one-shot test boot. Never overwrite the
+stock UKI, modules or default entry. A newest-entry auto-selection rule needs
+inspection before adding an entry.
+
+The local mkinitcpio pacman hook generates a preset for a new `pkgbase`. Its
+current template creates conventional kernel/initramfs files, not this machine's
+configured UKI. Renaming `pkgbase` does not complete UKI/boot setup.
+
+Before measurement: validate mixed-priority and two-hog invariants in real traces,
+error/cancellation/reset progress, three suspend/resume cycles and the 30-minute
+soak. Add the solo multi-job and aligned/offset two-victim cells, then freeze the
+confirmatory registration. See the [experiment protocol](../reports/kernel-limit-protocol.md).
+No installed package, module, preset, UKI, loader entry or stock boot setting was
+changed during this implementation.

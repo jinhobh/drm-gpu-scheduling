@@ -1,7 +1,9 @@
 # Gfx admission experiment and decision protocol
 
-2026-11-04. Prospective design update. No kernel patch, soak or new capture is
-claimed. The numerical registration below is a proposal to freeze before the
+2026-11-04. Prospective design with a subsequent
+[prototype implementation](gfx-admission-implementation.md). A source patch and
+mock/compile checks now exist; no production package, soak or new hardware capture
+is claimed. The numerical registration below is a proposal to freeze before the
 confirmatory matrix; it is not an already registered experiment.
 
 ## Priority and independent tracks
@@ -46,6 +48,12 @@ running job or bounds its duration. This is per scheduler, not device-wide; reco
 all gfx rings used. SDMA, compute and video admission remain unchanged. Disable
 user queues and audit direct submissions, which are outside the scheduler cap.
 
+The prototype uses each job's immutable armed priority (`s_priority`) for
+eligibility and reservation class, copying it at dispatch. Entity priority
+changes do not retag already armed jobs. Record this convention when interpreting
+priority-change tests and dispatch traces; use the explicit dispatch priority,
+not an assumption that every queued job has its entity's latest priority.
+
 `bg1-gfx` applies to **all** NORMAL/LOW clients combined, including interactive
 victims. It is not a background-hog classifier and can remove a victim's own
 pipelining. It cannot be implemented by setting total `credit_limit=1`.
@@ -82,8 +90,9 @@ from the combined cap invariant alone.
 The [2026-11-04 source/history audit](amdgpu-submission-audit.md) identifies the
 introducing commit, verifies the pinned downstream Arch sources and maps the
 allocation, direct-submission and recovery dependencies. The
-[separately named package scaffold](../kernel/README.md) is available; no
-admission patch, kernel build or runtime validation is claimed.
+[separately named package recipe](../kernel/README.md) now includes the prototype
+patch and source checks. Focused mock/compile checks pass; a full production
+kernel/package build and real-device runtime validation remain pending.
 
 The v7.2.11 parameter-validation code explicitly clamps
 `amdgpu_sched_hw_submission` to at least two and rounds it to a power of two.

@@ -3,7 +3,7 @@
 Read this first. It says what has been done, what is decided, and what to do next.
 Update the **Status** and **Next** sections whenever a step finishes.
 
-## Status (2026-10-20)
+## Status (2026-11-04)
 
 **Done: phase 1, the policy search in the simulator.**
 - `gpusim/` is a frozen, deterministic drm_sched + amdgpu APU simulator; `score.py` scores
@@ -41,10 +41,24 @@ Update the **Status** and **Next** sections whenever a step finishes.
   confound (tiled windows changed frame costs), now fixed. **`m3` done 2026-10-19**
   (`sched_policy` 1/2/0, 1.5): ordering doesn't fix bursts behind a hog (`pick` ≤ 0.2 ms,
   vk-hog p99 ~17 ms under all three; 1 in flight halves it under all three); fair helps a
-  hog-blocked frame 0 (8.4 vs 13–14 ms) but starves 30% of after-idle frames behind
+  hog-blocked frame 0 (8.4 vs 13–14 ms) but starves 35% of after-idle frames behind
   vkmark's job flood for up to 15.5 ms. The p1 re-run (`m3-p1r`, 2026-10-20) agrees; a
   ~1 ms FIFO-vs-others gap remains, confounded with boot age (Hyprland renders more and
   costlier jobs in long-running boots; 1.5).
+- **Upstream fair sleeper study done (2026-11-04, former Next 1).** Read pinned
+  Linux `v7.2.11` scheduler sources and checked all three m3-p2 vkmark captures.
+  Fair only folds cumulative runtime into vruntime on a pop with a successor still
+  queued. A flood that repeatedly empties its software queue can rejoin ahead of
+  the waiting victim using the short-job heuristic without charging that runtime
+  to its tree key. All 5,120 overtaking vkmark pops in the 21 frame-0 waits ≥ 5 ms
+  had empty queues after pop. **There is no 15 ms scheduler bound**: all ten waits
+  > 15 ms end with no queued vkmark job and a HIGH Hyprland submission 0.048–0.191 ms
+  later, consistent with a refresh-periodic submission gap. The cause of that CPU
+  gap and exact internal vruntime branches are not recorded. Policy 3 needs
+  persistent accounting, bounded sleeper credit, aging, and the in-flight limit;
+  phase 2 needs the actual upstream accounting path, not completion-time updates.
+  See [the source/evidence report](trace/reports/fair-sleepers.md) and
+  `trace/fair_sleepers.py`. Frozen simulator/policies unchanged.
 - Phases 2–4: not started.
 
 **Tooling (all in `trace/`, captures in `traces/`, gitignored):**
@@ -63,6 +77,7 @@ Update the **Status** and **Next** sections whenever a step finishes.
 | `workloads/hog.sh` | `hog.sh NAME`: one background load (`glmark2-terrain`, `glmark2-refract`, `stk`, `vk-hog`, `vk-hog1` (1 job in flight), `gl-hog` (glmark2 terrain off-screen 4K, 8.5 ms), `vkmark-cube`, `none`) |
 | `workloads/burst.sh` | `burst.sh HOG [BURST_CLIENT_ARGS]`: switch to an empty Hyprland workspace (back at exit), probe GPU timestamps, start the hog, warm up 3 s, run burst_client; logs to `$CAPTURE_OUT` (set by `capture.sh`) |
 | `join.py` | `python3 trace/join.py RUN...`: 1.2b, burst.csv × trace → `RUN/frames.csv`, per frame: submit / dep / order / pick / credit / ring / wake split of the start latency, `ok` (gpu_start inside [t_run, t_done]), `busy_by` (whose jobs ran on the ring while the frame waited); medians for frame 0 vs 1+, one line per run, pooled per condition; `--trace-only` (automatic without burst.csv) takes the frames from the trace alone; a run whose timestamp correction is looser than 100 µs is re-aligned on the fences (stderr says by how much) |
+| `fair_sleepers.py` | `python3 trace/fair_sleepers.py RUN...`: read-only check of frame-0 stalls, overtaking vkmark queue exhaustion, queued work at release, and nearest HIGH Hyprland submission; see `trace/reports/fair-sleepers.md` |
 | `compare.py` | `python3 trace/compare.py [LABEL=]MATRIX[,MATRIX]...`: after join.py, per hog × matrix: start latency f0/f1+ p50/p99, presented − intended, Hyprland ms/frame, hog fps and job time |
 | `matrix.sh` | root: `sudo trace/matrix.sh [NAME]`: traced `burst.sh` runs for each hog × DPM condition × `REPS`, plus a `--calib` run per condition, shuffled; restores DPM auto / GFXOFF on exit; rejects unknown `HOGS` names up front; `DRY=1` prints the order |
 
@@ -112,12 +127,13 @@ next to the terminal).
 
 Root steps are for the user; give commands with absolute paths.
 
-1. **Why fair starves the after-idle frame behind vkmark (no root, the agent).** Read
-   7.2.11's `drivers/gpu/drm/scheduler/` (`sched_rq.c` / `sched_entity.c`: vruntime on
-   wake-up, `drm_sched_rq_update_prio`, any time/vruntime bound, how `pick` interacts with
-   credit), explain the ~15 ms ceiling and why vk-hog's frame 0 gains while vkmark's loses.
-   This decides what `sched_policy=3` must do differently from upstream fair for sleepers
-   (the sim policy's bounded sleeper credit) and gives phase 2 a fair model to validate.
+1. **Compositor pacing** (found in m2): with any other client rendering, burst frames are
+   presented a refresh later (p50 50 vs 33 ms at 60 Hz; ~0.8 vs ~0.4 missed vblanks per
+   frame), even under vkmark where the GPU wait is 0.26 ms. Hypothesis: Hyprland renders
+   right after each vblank while another surface is updating, so a commit arriving a few ms
+   after the frame callback waits a whole refresh. Check from the trace (Hyprland's job
+   times vs `drm_vblank_event` vs the victim's commit = `t_present`) and Hyprland's
+   render-timing options. It belongs in the baseline, and in phase 2's compositor model.
 2. **Optional: policy 1 right after a fresh boot (root, the user; ~7 min).** `m3-p1r`
    (2026-10-20) was meant to be this but ran in a 13 h old boot with 3 suspend/resumes, so
    the boot-age confound in 1.5 is still open (≤ ~1 ms on FIFO's numbers, no conclusion
@@ -137,16 +153,9 @@ Root steps are for the user; give commands with absolute paths.
    - Hog names are checked by `matrix.sh` now (the first p1 run had typos, `traces/m3-p1-badhog/`
      is not data). The GPU timestamp offset can jump between runs (seen only in the 15 h
      boot of 2026-10-19): `join.py` re-aligns loose runs on the fences.
-3. **Compositor pacing** (found in m2): with any other client rendering, burst frames are
-   presented a refresh later (p50 50 vs 33 ms at 60 Hz; ~0.8 vs ~0.4 missed vblanks per
-   frame), even under vkmark where the GPU wait is 0.26 ms. Hypothesis: Hyprland renders
-   right after each vblank while another surface is updating, so a commit arriving a few ms
-   after the frame callback waits a whole refresh. Check from the trace (Hyprland's job
-   times vs `drm_vblank_event` vs the victim's commit = `t_present`) and Hyprland's
-   render-timing options. It belongs in the baseline, and in phase 2's compositor model.
-4. Real burst sources (1.3b), mpv as a video victim/load (1.4), the CPU-load control (1.5),
+3. Real burst sources (1.3b), mpv as a video victim/load (1.4), the CPU-load control (1.5),
    then the report (1.6).
-5. Phase 2 inputs found so far: GFXOFF exit (~1.0 ms before the command buffer starts plus
+4. Phase 2 inputs found so far: GFXOFF exit (~1.0 ms before the command buffer starts plus
    ~0.4 ms slower first job, after ≥ 100 ms idle; the sim has no GFXOFF model), Hyprland job
    cost (p50 0.29 ms, eDP-1 only), credit_limit 2 as the binding mechanism, the compositor
    pacing above, and DPM auto's steady exec for light work (0.68–0.97 vs 0.62 ms at high).
@@ -482,10 +491,15 @@ input → client CPU → CS ioctl → [dep wait] → [sched wait: queued, not ye
     14.2 (FIFO); f0 credit 2.2 vs 5.7 vs 9.1 ms. The woken victim gets the first free credit
     ahead of the hog's queued job. Steady frames and the p99 don't change.
   - **Fair starves an after-idle frame behind a job flood**: with vkmark (0.03–0.05 ms
-    jobs), 18 of 60 frame-0s waited 5–15.5 ms (credit ~14 ms + pick ~1 ms, the ring busy
-    with vkmark the whole time, max ≈ 15.5 ms in every run); 0 of 100 under FIFO/RR. f1+
+    jobs), 21 of 60 frame-0s waited ≥ 5 ms, up to 15.53 ms (credit ~14 ms + pick ~1 ms,
+    the ring busy with vkmark the whole time, max ≈ 15.5 ms in every run); 0 of 100 under FIFO/RR. f1+
     p99 5.3 vs 1.3–2.0 ms. A sleeper-placement effect of upstream's fair vruntime; the
-    ~15 ms ceiling looks like a bound in the code. Next, item 1.
+    ~15 ms ceiling was initially suspected to be a code bound. **Source study
+    (2026-11-04) rules that out:** repeated empty-queue pops bypass the runtime-to-
+    vruntime update; short-job re-entry can repeatedly overtake a waiting frame.
+    The ten > 15 ms waits all end at a flood submission gap near the next HIGH
+    compositor submission. See [the report](trace/reports/fair-sleepers.md).
+    (`fair_sleepers.py` recounts 21 ≥ 5 ms cases; the earlier manual count was 18.)
   - **Boot-age confound, not resolved by p1r**: p1r also ran in a long-running boot (13 h,
     3 suspend/resumes; the fresh boot asked for in Next did not happen), and shows the
     same pattern: Hyprland renders more and costlier gfx jobs than in the fresh p2/p0
@@ -497,7 +511,7 @@ input → client CPU → CS ioctl → [dep wait] → [sched wait: queued, not ye
     FIFO numbers by ≤ ~1 ms and changes none of the conclusions above. Settling it needs
     policy 1 right after a fresh boot (Next 2, optional).
   - Presentation: f1+ p50 stays ~50 ms under any load and all policies (compositor pacing,
-    Next 3). The p99 differences (67–100 ms) are one refresh apart and noisy with 3 runs.
+    Next 1). The p99 differences (67–100 ms) are one refresh apart and noisy with 3 runs.
 - [ ] 1.6 Report: latency-breakdown plots per scenario (publish as an artifact page).
 
 ## Phase 2: fit the simulator (reuses the phase 1 traces)

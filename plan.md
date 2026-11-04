@@ -79,6 +79,20 @@ Update the **Status** and **Next** sections whenever a step finishes.
   **Monitor confound:** all 16 m3-p1r metadata files list eDP-1 AND DP-1 active;
   earlier m2/m3 matrices list only eDP-1. p1r is not a single-display repeat and
   cannot isolate boot age. Frozen simulator/policies unchanged.
+- **Novelty and baseline specification done (2026-11-04, former Next 1).**
+  See [the review and normative baseline](trace/reports/novelty-baselines.md).
+  Pinned v7.2.11 to `a2de78ee6ed8bf8cd99d177c74865a6e8c3cb6ea`:
+  it **already includes** stable race fix `e89900c441fe` (upstream `2ab510e63197`).
+  Mainline `05441d697f7f` has identical `sched_rq.c`. No duplicate cherry-pick or
+  separate “fixed fair” arm is currently needed; verify Arch's downstream source
+  before attesting the capture binary. Upstream also discussed repeated-re-entry
+  unfairness in August and withdrew its proposed min_vruntime fix; our general
+  failure mode is not new. V3D and TimeGraph establish conservative dispatch as
+  prior art. The specified `fifo-global1-gfx` baseline caps **all priorities,
+  including HIGH/KERNEL**, at one unfinished job per measured gfx scheduler,
+  with other engines unchanged. A NORMAL/LOW-only cap is a separate ablation.
+  This completes the source/specification task, not kernel implementation or
+  novelty clearance for a full paper. Simulator/policies and stock kernel unchanged.
 - Phases 2–4: not started.
 
 **Tooling (all in `trace/`, captures in `traces/`, gitignored):**
@@ -160,20 +174,24 @@ not a measured desktop responsiveness improvement. Existing measurements use one
 one compositor, mostly synthetic victims and typically three run repetitions; frame
 counts alone do not establish statistical significance across independent sessions.
 
-**Novelty must be checked before expanding the design.** Queue-depth limiting and GPU
-interference protection have prior art. Start with Linux's
-[V3D queue-depth rationale](https://docs.kernel.org/gpu/v3d.html),
-[TimeGraph](https://www.usenix.org/conference/usenixatc11/timegraph-gpu-scheduling-real-time-multi-tasking-environments),
-and the [upstream fair vruntime fixes discussion](https://mail-archive.com/dri-devel@lists.freedesktop.org/msg635635.html).
-These are starting points, not a completed related-work survey. Separate the empty-pop
-accounting mechanism in our report from known upstream races/fixes, and pin the exact
-commits tested. A regression in an old fair version is insufficient as the main novelty.
+**Focused novelty/baseline review complete; recheck before expanding the design.**
+See [the review and source pins](trace/reports/novelty-baselines.md). V3D and
+TimeGraph establish conservative dispatch as prior art; upstream's withdrawn
+August min_vruntime proposal already discussed repeated-re-entry unfairness.
+Our capture-supported accounting mechanism adds workload-specific evidence,
+not a new general failure mode. The published locking-race fix is already in
+v7.2.11. This review specifies the minimum comparisons; it does not establish
+novelty for the full policy or replace a broader related-work survey for a paper.
 
 **Required comparisons:** FIFO, upstream fair with applicable fixes, a simple global
 one-job-in-flight limit, and the full policy. Keep stock fair as a historical baseline
 where useful. A cooperating `vk-hog1` alone is not the global-limit baseline: the latter
-must enforce its limit in the kernel without client changes, with treatment of HIGH and
-KERNEL work documented. Use the same kernel base and settings for causal comparisons.
+must enforce its limit in the kernel without client changes. The completed
+[baseline specification](trace/reports/novelty-baselines.md) caps every priority, including
+HIGH/KERNEL, per measured gfx scheduler; a NORMAL/LOW-only cap is a separate ablation.
+Upstream v7.2.11 already contains the published locking-race fix, so current stock
+and fixed fair are one arm unless a later reviewed fix is selected. Use the same
+kernel base and settings for causal comparisons.
 
 **Full-paper gates:**
 - [ ] Demonstrate the kernel policy on unmodified real victims: application launches,
@@ -203,14 +221,18 @@ with appropriate novelty and scope rather than claiming the full policy is neces
 
 Root steps are for the user; give commands with absolute paths.
 
-1. **Novelty and baseline specification (no root, the agent).** Review the related work
-   above and current upstream fair fixes; record exact commits, distinguish known bugs
-   from our mechanism, and specify the kernel-enforced global one-job baseline and its
-   priority treatment. This determines the minimum policy and hardware comparisons needed.
-2. **Real application and measurement study:** real burst sources (1.3b), mpv as a video
-   victim/load (1.4), and the CPU-load control (1.5), then the report (1.6). Include
-   presentation outcomes and an independent-run statistical plan from the publication gates.
-   Finish this study before deciding whether to submit a workshop/short paper.
+1. **Real application and measurement study (agent tooling first; root captures by
+   the user):** real burst sources (1.3b), mpv as a video victim/load (1.4), and
+   the CPU-load control (1.5), then the report (1.6). Include presentation outcomes
+   and an independent-run statistical plan from the publication gates. Finish
+   this study before deciding whether to submit a workshop/short paper.
+2. **Carry the completed baseline specification into phases 2–4:**
+   [review/spec](trace/reports/novelty-baselines.md). Use v7.2.11 FIFO, fair with
+   its already merged race fix, `fifo-global1-gfx` and the selected full policy
+   on the same base. Verify Arch source/config/module provenance in phase 3;
+   recheck upstream fixes before implementation. The withdrawn min_vruntime
+   proposal is not a validated patch. Include the NORMAL/LOW-only cap ablation
+   to separate priority exemptions from classification/prediction benefits.
 3. **Targeted pacing follow-up:** the existing-trace investigation is complete; see
    `trace/reports/compositor-pacing.md`. Before attributing presentation changes to
    scheduling, record the exact Hyprland/Mesa builds and render options, verify a single
@@ -616,7 +638,8 @@ input → client CPU → CS ioctl → [dep wait] → [sched wait: queued, not ye
 - [ ] 2.5 Rebuild `scenarios.py` around the real workloads (Hyprland animations, the benchmarks, mpv).
 - [ ] 2.6 Validate sim-FIFO and sim-fair against matching hardware versions on wait-time and
   frame-time distributions. Model fair's actual delayed runtime accounting and empty-pop
-  path; distinguish stock 7.2.11 from the fixed upstream baseline.
+  path. v7.2.11 already has the merged race fix; distinguish any later reviewed
+  accounting fix by exact patch identity rather than inventing a second fixed arm.
 - [ ] 2.7 Re-score all baselines and `policy.py`. If the ranking FIFO > fair > policy holds,
   compare with a simple global one-job limit before phase 3. If the ranking flips or the
   margin collapses, revisit the mechanisms on the fitted sim first. Simulator ranking
@@ -627,7 +650,9 @@ input → client CPU → CS ioctl → [dep wait] → [sched wait: queued, not ye
 - [ ] 3.1 Package `linux-drmsched`: Arch's 7.2.11 PKGBUILD with `pkgbase` renamed, its own
   boot entry; the stock kernel stays the default.
 - [ ] 3.1b Implement the kernel-enforced global one-job baseline and applicable upstream
-  fair fixes on the same test-kernel base. Pin patches and document credit/priority rules;
+  fair fixes on the same test-kernel base. Follow
+  `trace/reports/novelty-baselines.md`: gfx-only initialization credit limit 1, all priorities included, unit-credit and bypass-path audit; do not
+  reapply the race fix already in v7.2.11. Pin Arch provenance and any new patches;
   retain the stock kernel and default boot entry untouched.
 - [ ] 3.2 Port the selected policy from the fitted simulator to C as `sched_policy=3` in `drivers/gpu/drm/scheduler`: fixed-point
   instead of floats, hrtimer to re-run selection after a hold, per-entity state in

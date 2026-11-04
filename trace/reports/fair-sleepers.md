@@ -25,6 +25,17 @@ Arch's complete build tree; local headers do not include the scheduler C files.
 SHA-256 of the downloaded `sched_rq.c`:
 `634142eb99ad9a0110cb1c2fcd5b3944a3548dd05422f19730c30939242480d6`.
 
+## Later baseline/novelty clarification (2026-11-04)
+
+The [related-work review](novelty-baselines.md) pins the tag's exact commit and
+confirms v7.2.11 already contains the upstream push/pop locking-race fix. That
+fix preserves the successor-only accounting path described below. Upstream's
+August min_vruntime proposal also discussed repeated-re-entry unfairness and
+moved accounting before the successor test, but was withdrawn. Our report adds
+workload-specific evidence; the general pathology is not a new discovery.
+“Stock” versus “fixed” fair are not separate arms until a further reviewed fix
+is identified. Arch's exact downstream build remains to be verified.
+
 ## Wake-up and accounting
 
 Fair combines priorities in one tree. `drm_sched_rq_update_prio()` caches the

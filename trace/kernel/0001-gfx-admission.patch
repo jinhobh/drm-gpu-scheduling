@@ -53,29 +53,6 @@ index ea9a6ed..2aa1e65 100644
  		args.score = ring->sched_score;
  		args.name = ring->name;
  
-diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
-index 14b539d..33387c4 100644
---- a/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
-+++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
-@@ -244,7 +244,8 @@ int amdgpu_wbrf = -1;
- int amdgpu_damage_clips = -1; /* auto */
- int amdgpu_umsch_mm_fwlog;
- int amdgpu_rebar = -1; /* auto */
--int amdgpu_user_queue = -1;
-+/* Test kernel: keep measured rendering on the scheduler path by default. */
-+int amdgpu_user_queue;
- uint amdgpu_hdmi_hpd_debounce_delay_ms;
- int amdgpu_ptl = -1; /* auto */
- 
-@@ -1100,7 +1101,7 @@ module_param_named(rebar, amdgpu_rebar, int, 0444);
-  * -  1 = user queues enabled and kernel queues enabled (if supported)
-  * -  2 = user queues enabled and kernel queues disabled
-  */
--MODULE_PARM_DESC(user_queue, "Enable user queues (-1 = auto (default), 0 = disable, 1 = enable, 2 = enable UQs and disable KQs)");
-+MODULE_PARM_DESC(user_queue, "Enable user queues (-1 = auto, 0 = disable (test-kernel default), 1 = enable, 2 = enable UQs and disable KQs)");
- module_param_named(user_queue, amdgpu_user_queue, int, 0444);
- 
- /*
 diff --git a/drivers/gpu/drm/scheduler/gpu_scheduler_trace.h b/drivers/gpu/drm/scheduler/gpu_scheduler_trace.h
 index 261713d..5404a38 100644
 --- a/drivers/gpu/drm/scheduler/gpu_scheduler_trace.h
@@ -354,7 +331,7 @@ index 214ed02..7366a6b 100644
  	INIT_DELAYED_WORK(&sched->work_tdr, drm_sched_job_timedout);
  	INIT_WORK(&sched->work_run_job, drm_sched_run_job_work);
 diff --git a/drivers/gpu/drm/scheduler/sched_rq.c b/drivers/gpu/drm/scheduler/sched_rq.c
-index 23f46ec..295da58 100644
+index 23f46ec..059fc2a 100644
 --- a/drivers/gpu/drm/scheduler/sched_rq.c
 +++ b/drivers/gpu/drm/scheduler/sched_rq.c
 @@ -8,6 +8,7 @@
@@ -407,7 +384,7 @@ index 23f46ec..295da58 100644
  	spin_unlock(&rq->lock);
  
 -	return rb ? rb_entry(rb, struct drm_sched_entity, rb_tree_node) : NULL;
-+	if (tracing)
++	if (tracing && examined)
 +		trace_drm_sched_admission_select(sched, examined, skipped, reason,
 +						priority, ktime_get_ns() - start);
 +	return selected;

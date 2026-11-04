@@ -116,54 +116,89 @@ and confirm forward progress after each. Record the exact recovery exercise;
 ordinary trouble-free use is not a GPU hang-recovery test. Stock kernel, modules
 and default boot entry stay untouched.
 
-## Proposed registration to freeze before confirmatory runs
+## Pilot first; registration is not frozen
 
-All arms use the identical test-kernel binary, config and patch set. Arm names
-record ordering policy, admission and selection as separate fields:
+The earlier six-block/30-session proposal and the many per-cell CI gates are
+withdrawn. Choose the confirmatory block count from between-boot pilot variation,
+then fix it **before** any confirmatory data. Pilot/soak runs never enter that data.
+The initial primary contrast is FIFO cap-off versus FIFO bg1. Fair's cap and
+selection contrasts, and global1, are secondary/diagnostic until a separate
+confirmatory question is justified. Do not multiply three primary claims across
+all arms, clients, cells and metrics.
 
-| Arm | Ordering | Admission | Selection | Comparison purpose |
-|---|---|---|---|---|
-| `fifo/off/stock` | FIFO | Original | Stock | FIFO control |
-| `fifo/bg1/stock` | FIFO | NORMAL/LOW cap one | Stock priority selection | Cap effect under FIFO |
-| `fair/off/stock` | Fair | Original | Stock | Fair control |
-| `fair/bg1/stock` | Fair | NORMAL/LOW cap one | Stop at cap-blocked ready head | Cap-only diagnostic, including HIGH blocking |
-| `fair/bg1/skip-cap` | Fair | NORMAL/LOW cap one | Skip only extra-cap-blocked entities | Cap plus explicitly modified selection |
+### One arm registry
 
-Compare `fair/bg1/stock` against `fair/off/stock` for cap-only behavior, and
-`fair/bg1/skip-cap` against `fair/bg1/stock` for the selection change with the cap
-held fixed. The comparison against `fair/off/stock` measures their combined
-intervention; never label that contrast simply “fair + cap.” With admission off,
-the extra-cap-blocked predicate is always false; `skip-cap` should reduce to stock
-selection. Verify that property before the matrix rather than claiming an
-independent selection effect with no cap.
+[arms.csv](../kernel/arms.csv) is the sole normative arm/boot-selector
+registry, including contrast controls and primary/secondary/diagnostic roles.
+`python3 trace/kernel/arms.py ARM` emits explicit boot arguments, including user
+queues off. Other documents link here rather than maintain copied arm tables.
+All comparisons use one identical test-kernel binary, config and patch stack.
+Sleeper repairs are separate pinned factors, never relabeled as stock fair.
 
-Use opt-in admission and selection selectors, default off/stock; switch only at
-initialization or through an audited drained transition. Boot-only selectors are
-sufficient. Do not compare different builds as the causal contrast. Any sleeper
-repair becomes another pinned factor evaluated with admission/selection explicitly
-held fixed; never relabel it as stock fair. Neither admission nor skipped-head
-selection repairs empty-queue runtime accounting by itself.
+For the mechanism reference, compare a capped `vk-hog` cell with **cap-off,
+stock-selection `vk-hog1`, under the same ordering policy, in the paired block's
+uncapped boot**. For FIFO this is the registry's FIFO control; for fair it is its
+fair control. The capped arm's own `vk-hog1` is an additional self-cost observation,
+not the mechanism reference. Historical m3 runs are not paired controls.
 
-Proposed fixed budget: **six independent blocks**, each containing the five arm
-sessions (**30 boot/login sessions** if each arm needs a separate boot), three run
-repetitions per workload cell. This replaces the earlier four-arm/24-session
-proposal; it is not an unreported addition after observing outcomes. Publish a
-counterbalanced arm order and randomized within-session workload order before
-starting. No early success stopping or adding sessions after seeing significance.
-A safety failure stops the experiment; an invalid session is logged and replaced
-only under predefined provenance/trace validity rules. Keep pilots and soak runs
-outside the confirmatory dataset.
+### FIFO feasibility and variance pilot
 
-Before each session verify eDP-1 as the only active output; record exact Hyprland
-and Mesa builds, render options, geometry, refresh, policy, admission and selection modes, user
-queue setting, boot ID/age, DPM/GFXOFF settings and source/config/module hashes.
-Freeze those settings across arms. Preserve all outcomes and missing feedback.
+Start with **three independent off/bg1 boot pairs (six boots)**, not six
+confirmatory blocks. Counterbalance which arm boots first and record a seeded
+order before running. `trace/pilot.py plan --seed N --out PATH` prepares commands
+without executing them. It uses the existing m3 cells: idle, heavy Vulkan,
+cap-off `vk-hog1` reference and tiny-job flood, three run repetitions, DPM auto.
+It adds short no-hog pacing probes before/after each session matrix. Keep one
+active eDP-1 output, fixed geometry/userspace/options, no suspends during a
+session, and record boot age, all selectors, user-queue setting, source/config/
+module hashes and DPM/GFXOFF. The separately named kernel/recovery checks remain
+prerequisites; no command here installs or boots a kernel automatically.
 
-Use m3 cells: idle, heavy Vulkan, `vk-hog1`, heavy off-screen GL and tiny-job flood.
-Add a throughput-only tiny-job cell so presentation pacing does not set its rate.
-Rerun the cooperating-hog reference with current builds/settings; historical m3
-numbers are context, not paired controls. Retain burst_client timing unchanged and
-add cap validation tracepoints alongside the existing harness where needed.
+The pilot must establish these before registration:
+
+1. **Mechanism:** capped heavy-hog GPU-start latency approaches cap-off,
+   same-policy `vk-hog1` (proposed engineering tolerance: absolute difference of
+   run-median averages <= 1 ms); inspect traced credit/ring/pick decomposition and
+   reservation invariants. Report pilot intervals; this tolerance is a feasibility
+   check, not a claim of equivalence proven by a small sample.
+2. **Trace capacity:** stress the tiny-job flood, record event rates/buffer
+   overruns/lost records and selection cost. The patched selection event emits
+   only when `examined > 0`, suppressing empty FIFO queues. This reduces traffic;
+   it does not establish loss-free capture. Tune buffers/event configuration in
+   pilots and pin it before confirmation. Preserve every loss/failure as a pilot
+   outcome. Confirmatory loss invalidates that run's trace attribution, not an
+   entire boot or its still-valid timing/throughput observations by default.
+3. **Between-boot variability:** estimate paired differences for all primary
+   scalar outcomes below. The initial m3-only pilot cannot size the self-cost
+   endpoint: first implement the multi-job/two-victim cells, then run complete
+   additional pilot blocks containing them. Do not freeze a count from GPU-start
+   variance alone or label missing self-cost data as a pass.
+
+Preserve pilot IDs and all outcomes, including failed/missing runs. Record
+replacement criteria before confirmation (provenance/output/trace loss and missing
+feedback by endpoint), not after seeing an arm's latency. A safety failure stops
+work; it is not a conveniently replaceable invalid session. Freeze a balanced
+session order, randomized within-session workload order, full endpoint/missing-data
+rules, sample count and resource bound before confirmation. No success stopping
+or extending the count after seeing its significance.
+
+### Pacing covariate and presentation validity
+
+Record each pre/post no-hog probe with `pacing.py --csv`; classify paced warm
+callback-to-presentation delays as 2-refresh, 3-refresh, mixed or unknown.
+`pilot.py pacing FILE --refresh-ms T` implements a proposed descriptive classifier:
+at least 10 valid paced warm samples, with >=80% within 0.25 refresh of two or
+three; otherwise mixed/unknown. Preserve the proportions and missing feedback,
+not just the category. Thresholds must be checked in pilots and frozen.
+
+A stable 3-refresh session is **not invalid** just because another boot is stable
+2-refresh. A pre/post mode change is also an outcome, not an automatic whole-boot
+exclusion. Record both categories as descriptive covariates; show unadjusted
+presentation contrasts and matched-mode sensitivity analyses. The probe itself
+runs under the assigned cap, so its mode can be treatment affected: conditioning
+on it is not automatically a causal correction. Never discard a cap-induced mode
+change or silently rebaseline it away. Missing/ambiguous output/timing invalidates
+only the affected presentation attribution; retain independent GPU outcomes.
 
 ### Victim self-cost and two-client cells
 
@@ -192,51 +227,95 @@ execution with increased between-job gaps is still a victim regression. Record
 first-frame and steady outcomes; keep multi-job instrumentation separate from the
 unchanged m3 historical control.
 
-### Proposed decision thresholds
+### Three statistical primary criteria and one safety prerequisite
 
-Apply the cost gates per victim, workload and arm contrast; report FIFO and each
-fair contrast separately. A combined fair-cap/selection gain cannot be attributed
-to admission alone.
+These are **proposed** engineering targets for the initial FIFO decision, to
+review using feasibility/precision pilots before freezing. The unit of inference
+is the independent paired boot block. Average the prespecified run summaries
+within each session/cell first. A good p50 across clients cannot hide one losing
+service, but secondary per-cell CIs are not dozens of extra mandatory gates.
 
-- Mechanism replication: heavy-hog GPU-start median with kernel cap is within
-  1 ms of the same-block `vk-hog1` reference, and traced NORMAL/LOW occupancy
-  obeys the cap. This tolerance is a proposed engineering criterion.
-- Heavy-hog throughput loss at most **5%** relative to the uncapped stock arm.
-- Tiny-job-flood throughput loss at most **5%**.
-- Under heavy-hog contention, frame-0 presentation p50 improves by at least
-  **one measured refresh** (~16.67 ms at 60 Hz), with a paired 95% confidence
-  interval excluding zero. This is a target, not a prediction for every m3 cell.
-- **Idle victim self-cost:** for both single-job and multi-job cells, summed GPU
-  execution/frame and first-submit-to-last-completion p50 increase by at most
-  **5%**; first-frame and steady presentation latency p50 increase by at most
-  **1 ms**; missed-refresh rate increases by at most **one percentage point**.
-  Evaluate each metric separately against the same-policy uncapped stock control.
-- **Two-client self-cost:** apply those same execution/span/latency/miss-rate
-  limits to **each** interactive client relative to the uncapped two-client cell,
-  for aligned and offset patterns. Each client's delivered frame rate may fall
-  by at most **5%**. Report maximum wait and consecutive missed-refresh streaks
-  individually; an improved average across clients cannot hide one losing service.
-- No credit leaks, persistent stalls or failed recovery/suspend checks.
+1. **GPU scheduling benefit:** block difference of first-frame GPU-start latency
+   (uncapped heavy `vk-hog` minus capped heavy `vk-hog`, using averages of run
+   medians), in ms. Require the paired two-sided 95% t interval's lower endpoint
+   > 0. Report first-submit-to-last-completion span, summed exec and inter-job gaps
+   alongside it to attribute the gain. Mechanism matching to the uncapped
+   `vk-hog1` reference is the pilot prerequisite above.
+2. **Interactive GPU self-cost:** use the prespecified two-client, three-job/frame,
+   no-hog aligned and half-refresh-offset cells. In each block, take the maximum
+   of the four per-client/cell log ratios of run-median GPU spans (capped/uncapped).
+   Require the t interval's upper endpoint <= log(1.05). This conservative
+   worst-client scalar is **one** primary endpoint, specified before data; report
+   all four components. Other solo/single-job/first-vs-steady exec/span/gap results
+   remain secondary. A material secondary regression warrants a stated limitation
+   or new experiment, not an unreported extra pass/fail hypothesis.
+3. **Throughput cost:** in each block, take the maximum log loss log(off/on) for
+   heavy `vk-hog` FPS and a throughput-only tiny-job-flood rate. Require its t
+   interval's upper endpoint <= -log(0.95). Report both component costs and their
+   intervals. Verify the tiny-job cell is not presentation limited in pilots;
+   that throughput-only extension remains to be implemented/validated.
+4. **Safety/integrity prerequisite (not a CI test):** no credit leaks, persistent
+   stalls, invariant violations or failed recovery/suspend checks. Trace validity
+   is assessed for each affected endpoint/run. Failure cannot be outweighed by
+   favorable latency or treated as a missing successful session.
 
-All numerical limits, including the new victim gates, are proposed choices to
-freeze before confirmatory runs, not user-approved tolerances or measured results.
-For upper-bound cost gates, require the paired 95% interval's upper endpoint to
-stay within the bound; an interval crossing it is inconclusive. A heavy-hog gain
-does not pass the overall gate if idle or two-client self-cost fails. Use the
-cap-only and selection-only-under-cap fair contrasts to explain any regression.
+The two per-block maxima are intentionally conservative; they estimate mean
+worst-client/worst-load cost across blocks, not a guarantee for every frame or
+future workload. Examine their pilot distributions before selecting an interval
+model/count. If the proposed tolerances are not measurable or feasible, revise
+and document the design **before** confirmation, rather than manufacturing a pass.
+Fair contrasts and other cells use the same reported GPU metrics as secondary
+analyses, with no joint all-arm pass claim. A later fair/presentation claim needs
+its own primary question and registration.
 
-Summarize outcomes per run/session; estimate paired differences by resampling
-complete independent blocks, never frames independently. Report effect sizes and
-95% intervals for throughput costs as well as latency. An interval crossing a
-decision boundary is inconclusive, not a pass. Six blocks may yield imprecise
-intervals; report that result without extending the fixed confirmatory sample.
-Any follow-up uses a new registration. Do not infer reliable p99 from a few dozen
-first frames.
+### Presentation and other secondary outcomes
 
-Keep `global1-gfx` distinct. Register its session count/order before its diagnostic
-captures; do not mix them into the primary cap comparison or attribute priority
-exemption benefits to adaptive classification. If a fixed limit works, retain it.
-If it hurts throughput, use those measured costs to motivate adaptive admission.
+Retain real presentation measurement, but remove the 1 ms median limits and the
+mandatory one-refresh p50 improvement gate. Report block differences in **mean
+first-frame and steady presentation latency**, in ms and measured refresh units;
+also report the share of frames that slip an additional refresh against a
+prespecified target derived from the matched uncapped calibration/output grid.
+Use the same target convention in both arms; do not calibrate away an arm's mode
+change. Freeze exact target/feedback/denominator rules after the pilot validates
+that instrumentation. Report discarded and missing feedback explicitly; do not
+silently omit failures from the slip-rate denominator or replace their latency
+with zero. Medians/distributions remain descriptive, not 1 ms pass/fail tests.
+
+Report exec time, inter-job gaps, span, start delay and throughput for every
+victim/cell; individual delivered FPS, maximum wait and missed-refresh streaks
+for two-client cells; selection cost/fairness and HIGH waiting. These are
+secondary effect estimates with uncertainty and multiplicity disclosed. The
+kernel go/no-go now prioritizes GPU attribution. A paper claiming responsiveness
+still needs a well-powered presentation result, independently registered.
+
+### Small-sample inference and block-count choice
+
+Use the paired block values d_b and **mean(d) +/- t_(.975,B-1) s(d)/sqrt(B)**,
+not a percentile bootstrap over six observations. The paired t interval assumes
+independent blocks and adequately modeled block differences; it is not a cure
+for skew, outliers or pacing mixtures. Show every block and inspect the pilot
+shape. An exact two-sided sign-flip test is a sensitivity check only when null
+sign symmetry/exchangeability is defensible; with six pairs its smallest p is
+2/64 = 0.03125. It does not yield model-free precision or rescue a bad design.
+See [NIST's paired-difference interval](https://itl.nist.gov/div898/handbook/prc/section3/prc312.htm).
+
+`trace/paired.py` accepts one scalar per stage/block/metric, rejects duplicate
+blocks, mixed pilot/confirmation and different block sets, and reports t intervals
+and sign-flip sensitivity. For pilot-only planning it searches a prespecified
+candidate range for t_(.975,B-1) * inflation * pilot_SD / sqrt(B) <= target
+half-width. Suggested planning inputs are 1.5 SD inflation and half-widths of
+0.5 ms (GPU benefit), log(1.025) (self-cost), and -log(0.975) (throughput cost).
+These are precision-planning choices, not power guarantees or frozen sample size.
+Pilot variance from three blocks is uncertain; extend the feasibility pilot if
+needed, and reject zero-variance sizing rather than infer infinite precision.
+Choose a practical candidate/resource range before the planning call (tool
+default 8..60); an infeasible result calls for redesign, not clipping to a passing
+count. Select one common count meeting all primary precision targets, publish
+that count/order/analysis specification, then start fresh confirmation. Report
+inconclusive intervals without post-hoc extension. Do not bootstrap frames or
+infer reliable p99 from a few dozen first frames.
+
+Global1 remains a separate diagnostic with its own planned session budget. Keep
+adaptive admission and simulator fitting conditional on measured costs/benefit.
 If GPU waits improve without presentation, investigate pacing before adding
-prediction/holds. Simulator fitting and `sched_policy=3` remain conditional;
-investigate integration into fair for the upstream path.
+prediction/holds or claiming desktop responsiveness.

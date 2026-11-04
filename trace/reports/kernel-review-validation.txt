@@ -1,0 +1,188 @@
+Kernel review follow-up validation (2026-11-04)
+
+b5ec8e533b3c8f14af75d37032bad83bb8e862fe2b309cf978b823fd14f66e0e  trace/kernel/0001-gfx-admission.patch
+0ddf0201c32c9263056722ba421348048a02121062d89a2188b8a97914fe9ad1  trace/kernel/0002-test-disable-user-queues.patch
+e3a593263b402d5de7c8180e11fac4f53b81b72ead24269b8fe3f43273ea3234  trace/kernel/scheduler-files.sha256
+bcbcc51aef7aa58a778a1a1394a38123eb45b1c4a779edc29d2116974aa0c7b2  trace/kernel/patched-files.sha256
+a65585391e7f30f0c89104cd446e5f7cc178ad9a79ff623852560aeaf2459b7f  trace/kernel/arms.csv
+
+=== kunit-fifo.log ===
+[18:30:59] Configuring KUnit Kernel ...
+[18:30:59] Building KUnit Kernel ...
+Populating config with:
+$ make ARCH=um O=/home/jinho/Projects/drm-gpu-scheduling/.cache/kernel-kunit olddefconfig
+Building with:
+$ make all compile_commands.json scripts_gdb ARCH=um O=/home/jinho/Projects/drm-gpu-scheduling/.cache/kernel-kunit --jobs=8
+[18:31:03] Starting KUnit Kernel (1/1)...
+[18:31:03] ============================================================
+Running tests with:
+$ /home/jinho/Projects/drm-gpu-scheduling/.cache/kernel-kunit/linux 'kunit.filter_glob=drm_sched_admission*' kunit.enable=1 mem=1G console=tty kunit_shutdown=halt
+[18:31:03] ============ drm_sched_admission (13 subtests) =============
+[18:31:03] [PASSED] admission_pipeline_off
+[18:31:03] [PASSED] admission_combined_cap
+[18:31:03] [PASSED] admission_all_blocked_skip
+[18:31:03] [PASSED] admission_exempt
+[18:31:03] [PASSED] admission_priority_snapshot
+[18:31:03] [PASSED] admission_stop_start
+[18:31:03] [PASSED] admission_stop_start_rearm
+[18:31:03] [PASSED] admission_direct_finish
+[18:31:03] [PASSED] admission_cleanup_fallback
+[18:31:03] [PASSED] admission_immediate
+[18:31:03] [SKIPPED] admission_head_stock (Requires fair's single run queue; rerun with sched_policy=2)
+[18:31:03] [SKIPPED] admission_head_skip (Requires fair's single run queue; rerun with sched_policy=2)
+[18:31:03] [SKIPPED] admission_total_not_skipped (Requires fair's single run queue; rerun with sched_policy=2)
+[18:31:03] =============== [PASSED] drm_sched_admission ===============
+[18:31:03] ============================================================
+[18:31:03] Testing complete. Ran 13 tests: passed: 10, skipped: 3
+[18:31:03] Elapsed time: 3.729s total, 0.001s configuring, 3.614s building, 0.082s running
+
+
+=== kunit-fair.log ===
+[18:31:03] Configuring KUnit Kernel ...
+[18:31:03] Building KUnit Kernel ...
+Populating config with:
+$ make ARCH=um O=/home/jinho/Projects/drm-gpu-scheduling/.cache/kernel-kunit olddefconfig
+Building with:
+$ make all compile_commands.json scripts_gdb ARCH=um O=/home/jinho/Projects/drm-gpu-scheduling/.cache/kernel-kunit --jobs=8
+[18:31:05] Starting KUnit Kernel (1/1)...
+[18:31:05] ============================================================
+Running tests with:
+$ /home/jinho/Projects/drm-gpu-scheduling/.cache/kernel-kunit/linux gpu_sched.sched_policy=2 'kunit.filter_glob=drm_sched_admission*' kunit.enable=1 mem=1G console=tty kunit_shutdown=halt
+[18:31:05] ============ drm_sched_admission (13 subtests) =============
+[18:31:05] [PASSED] admission_pipeline_off
+[18:31:05] [PASSED] admission_combined_cap
+[18:31:05] [PASSED] admission_all_blocked_skip
+[18:31:05] [PASSED] admission_exempt
+[18:31:05] [PASSED] admission_priority_snapshot
+[18:31:05] [PASSED] admission_stop_start
+[18:31:05] [PASSED] admission_stop_start_rearm
+[18:31:05] [PASSED] admission_direct_finish
+[18:31:05] [PASSED] admission_cleanup_fallback
+[18:31:05] [PASSED] admission_immediate
+[18:31:05] [PASSED] admission_head_stock
+[18:31:05] [PASSED] admission_head_skip
+[18:31:05] [PASSED] admission_total_not_skipped
+[18:31:05] =============== [PASSED] drm_sched_admission ===============
+[18:31:05] ============================================================
+[18:31:05] Testing complete. Ran 13 tests: passed: 13
+[18:31:05] Elapsed time: 2.120s total, 0.001s configuring, 2.005s building, 0.082s running
+
+
+=== x86.log ===
+make: Entering directory '/home/jinho/Projects/drm-gpu-scheduling/.cache/kernel-audit/linux-7.2.11'
+make[1]: Entering directory '/home/jinho/Projects/drm-gpu-scheduling/.cache/kernel-x86'
+  DESCEND bpf/resolve_btfids
+  DESCEND objtool
+  INSTALL libsubcmd_headers
+  CC [M]  drivers/gpu/drm/scheduler/sched_rq.o
+  LD [M]  drivers/gpu/drm/scheduler/gpu-sched.o
+make[1]: Leaving directory '/home/jinho/Projects/drm-gpu-scheduling/.cache/kernel-x86'
+make: Leaving directory '/home/jinho/Projects/drm-gpu-scheduling/.cache/kernel-audit/linux-7.2.11'
+
+=== python-tests.log ===
+test_background_dispatch_requires_matching_reservation (test_admission.AdmissionTest.test_background_dispatch_requires_matching_reservation) ... ok
+test_boundary_dispatch_identity_is_checked (test_admission.AdmissionTest.test_boundary_dispatch_identity_is_checked) ... ok
+test_capture_boundaries_are_reported (test_admission.AdmissionTest.test_capture_boundaries_are_reported) ... ok
+test_cleanup_releases_once (test_admission.AdmissionTest.test_cleanup_releases_once) ... ok
+test_cross_cpu_report_order_is_not_transition_order (test_admission.AdmissionTest.test_cross_cpu_report_order_is_not_transition_order) ... ok
+test_dispatch_on_other_scheduler_cannot_escape_validation (test_admission.AdmissionTest.test_dispatch_on_other_scheduler_cannot_escape_validation) ... ok
+test_empty_or_malformed_capture_is_not_a_pass (test_admission.AdmissionTest.test_empty_or_malformed_capture_is_not_a_pass) ... ok
+test_filtered_transition_only_trace_is_not_a_pass (test_admission.AdmissionTest.test_filtered_transition_only_trace_is_not_a_pass) ... ok
+test_missing_duplicate_and_lost_events_rejected (test_admission.AdmissionTest.test_missing_duplicate_and_lost_events_rejected) ... ok
+test_occupancy_and_original_credit_overflow_rejected (test_admission.AdmissionTest.test_occupancy_and_original_credit_overflow_rejected) ... ok
+test_priority_exemption_and_release_identity (test_admission.AdmissionTest.test_priority_exemption_and_release_identity) ... ok
+test_scan_summary_and_invalid_selection (test_admission.AdmissionTest.test_scan_summary_and_invalid_selection) ... ok
+test_schedulers_have_independent_serials (test_admission.AdmissionTest.test_schedulers_have_independent_serials) ... ok
+test_ambiguous_output_is_rejected (test_pacing.PacingTest.test_ambiguous_output_is_rejected) ... ok
+test_missing_output_is_rejected (test_pacing.PacingTest.test_missing_output_is_rejected) ... ok
+test_selects_output_by_sequence_and_time (test_pacing.PacingTest.test_selects_output_by_sequence_and_time) ... ok
+test_duplicate_blocks_and_mixed_stages_rejected (test_paired.PairedTest.test_duplicate_blocks_and_mixed_stages_rejected) ... ok
+test_exact_sign_flip_resolution (test_paired.PairedTest.test_exact_sign_flip_resolution) ... ok
+test_planning_uses_variability_and_precision (test_paired.PairedTest.test_planning_uses_variability_and_precision) ... ok
+test_six_blocks_with_one_refresh_shift_have_wide_interval (test_paired.PairedTest.test_six_blocks_with_one_refresh_shift_have_wide_interval) ... ok
+test_student_critical_values (test_paired.PairedTest.test_student_critical_values) ... ok
+test_order_and_references_come_from_registry (test_paired.PilotTest.test_order_and_references_come_from_registry) ... ok
+test_pacing_modes_and_missing_feedback (test_paired.PilotTest.test_pacing_modes_and_missing_feedback) ... ok
+test_firefox_lost_focus_never_injects_input (test_real_workloads.Workloads.test_firefox_lost_focus_never_injects_input) ... ok
+test_launch_logs_actions_and_restores_workspace (test_real_workloads.Workloads.test_launch_logs_actions_and_restores_workspace) ... ok
+test_map_failure_cleans_process_and_restores_workspace (test_real_workloads.Workloads.test_map_failure_cleans_process_and_restores_workspace) ... ok
+test_multi_display_rejected_before_mutation (test_real_workloads.Workloads.test_multi_display_rejected_before_mutation) ... usage: real.py [-h] [--hog HOG] [--cpu-workers CPU_WORKERS] [--trials TRIALS]
+               [--idle IDLE] [--duration DURATION] [--clip CLIP]
+               [--load-clip LOAD_CLIP] [--out OUT] [--check]
+               {gtk-launch,firefox-scroll,compositor,mpv}
+real.py: error: requires eDP-1 as the only active monitor; unplug/disable DP-1 first
+ok
+test_stop_escalates_for_unresponsive_group (test_real_workloads.Workloads.test_stop_escalates_for_unresponsive_group) ... ok
+test_extra_logs_and_path_escape_rejected (test_share_fair.ShareTest.test_extra_logs_and_path_escape_rejected) ... ok
+test_only_hash_matched_allowlisted_files_are_accepted (test_share_fair.ShareTest.test_only_hash_matched_allowlisted_files_are_accepted) ... ok
+
+----------------------------------------------------------------------
+Ran 30 tests in 0.025s
+
+OK
+
+checkpatch-scheduler.log: total: 0 errors, 0 warnings, 757 lines checked
+
+checkpatch-default.log: total: 0 errors, 0 warnings, 17 lines checked
+
+=== Negative preparation test; only dependency/PGP checks bypassed ===
+    linux-7.2.11.tar.xz ... Passed
+    linux-v7.2.11-arch1.patch.zst ... Passed
+    audited-files.sha256 ... Passed
+    0001-gfx-admission.patch ... Passed
+    scheduler-files.sha256 ... Passed
+    0002-test-disable-user-queues.patch ... Passed
+    patched-files.sha256 ... Passed
+    linux-7.2.11.tar.xz ... Passed
+    linux-v7.2.11-arch1.patch.zst ... Passed
+    audited-files.sha256 ... Passed
+    0001-gfx-admission.patch ... Passed
+    scheduler-files.sha256 ... Passed
+    0002-test-disable-user-queues.patch ... Passed
+    patched-files.sha256 ... Passed
+    config.x86_64 ... Passed
+Applying patch linux-v7.2.11-arch1.patch...
+drivers/gpu/drm/amd/amdgpu/amdgpu_device.c: OK
+drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c: OK
+drivers/gpu/drm/amd/amdgpu/amdgpu_ring.c: OK
+drivers/gpu/drm/amd/amdgpu/amdgpu_ring.h: OK
+drivers/gpu/drm/amd/amdgpu/amdgpu_fence.c: OK
+drivers/gpu/drm/amd/amdgpu/amdgpu_job.c: OK
+drivers/gpu/drm/amd/amdgpu/amdgpu_ib.c: OK
+drivers/gpu/drm/amd/amdgpu/gfx_v11_0.c: OK
+drivers/gpu/drm/amd/amdgpu/mes_v11_0.c: OK
+drivers/gpu/drm/scheduler/sched_main.c: OK
+drivers/gpu/drm/scheduler/sched_rq.c: OK
+drivers/gpu/drm/scheduler/sched_entity.c: OK
+drivers/gpu/drm/scheduler/sched_fence.c: OK
+include/drm/gpu_scheduler.h: OK
+Applying patch 0001-gfx-admission.patch...
+drivers/gpu/drm/amd/amdgpu/amdgpu_device.c: OK
+drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c: OK
+drivers/gpu/drm/scheduler/gpu_scheduler_trace.h: OK
+drivers/gpu/drm/scheduler/sched_internal.h: OK
+drivers/gpu/drm/scheduler/sched_main.c: OK
+drivers/gpu/drm/scheduler/sched_rq.c: OK
+drivers/gpu/drm/scheduler/tests/Makefile: OK
+drivers/gpu/drm/scheduler/tests/mock_scheduler.c: OK
+drivers/gpu/drm/scheduler/tests/sched_tests.h: OK
+drivers/gpu/drm/scheduler/tests/tests_admission.c: OK
+include/drm/gpu_scheduler.h: OK
+Applying patch 0002-test-disable-user-queues.patch...
+drivers/gpu/drm/amd/amdgpu/amdgpu_device.c: OK
+drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c: OK
+drivers/gpu/drm/scheduler/gpu_scheduler_trace.h: OK
+drivers/gpu/drm/scheduler/sched_internal.h: OK
+drivers/gpu/drm/scheduler/sched_main.c: OK
+drivers/gpu/drm/scheduler/sched_rq.c: OK
+drivers/gpu/drm/scheduler/tests/Makefile: OK
+drivers/gpu/drm/scheduler/tests/mock_scheduler.c: OK
+drivers/gpu/drm/scheduler/tests/sched_tests.h: OK
+drivers/gpu/drm/scheduler/tests/tests_admission.c: OK
+include/drm/gpu_scheduler.h: OK
+==> ERROR: Config changed; review the toolchain/config before building
+==> ERROR: A failure occurred in prepare().
+
+No new GPU capture, production package, pilot or confirmation performed.
+The hardware pilot/block count remain pending; three pilot boot pairs are planned only.
+Raw bundle extraction/checksums/reanalysis matched prior evidence exactly; uploaded draft digest also matches.

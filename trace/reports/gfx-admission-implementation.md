@@ -9,9 +9,9 @@ not a built production kernel package, hardware safety finding or latency result
 [The patch](../kernel/0001-gfx-admission.patch) applies after Arch's pinned
 `v7.2.11-arch1` patch. It introduces boot-only AMDGPU gfx admission and selection
 parameters, independent scheduler reservation state and experimental tracepoints.
-[The recipe and arm table](../kernel/README.md) specify exact controls. All five
+[The recipe and arm registry](../kernel/README.md) specify exact controls. All five
 primary arms and the separate all-priority diagnostic use one patch/config/build;
-defaults are off/stock. Test-kernel user queues default off. Physical ring/fence
+defaults are off/stock. Test-kernel user queues default off via a separate test-only patch. Physical ring/fence
 storage and the driver-wide minimum-two parameter stay unchanged.
 
 Every existing in-tree `drm_sched_init_args` caller uses an aggregate initializer,
@@ -77,7 +77,7 @@ Three experimental events leave the existing stable events unchanged:
 |---|---|
 | `drm_sched_admission` | acquire=0, finished release=1, cleanup release=2; device/ring, finished fence, client, saved priority, serial, occupancy, original credits/limit and error |
 | `drm_sched_admission_dispatch` | each dispatch's armed priority, finished fence and reservation serial (zero for exempt/off), extra cap and original credit state |
-| `drm_sched_admission_select` | examined/skipped nodes, final reason/selected priority and scan time; reasons 0=selected, -2=no head/ready job, -11=extra cap, -28=original credits |
+| `drm_sched_admission_select` | examined/skipped nodes, final reason/selected priority and scan time for nonempty queues only (empty priority probes emit nothing); reasons 0=selected, -2=no head/ready job, -11=extra cap, -28=original credits |
 
 `trace/admission.py` checks observed bg1 reservation/dispatch identities and bounds,
 serial gaps, duplicate/unmatched transitions, priority exemption and trace loss.
@@ -88,8 +88,7 @@ observations, not a bound on future selection time.
 
 `capture.sh` records both boot selectors and installed module artifact hashes,
 plus the running config hash and packaged build manifest when present. The recipe
-checks the audited base **before** the research patch and a second manifest after
-it, then rejects config/release drift. Its successful-build manifest records the
+checks the audited base **before** the research patch and intermediate/final manifests around the separate test-default patch, then rejects config/release drift. Its successful-build manifest records the
 source base, patch/config/manifest hashes, toolchain versions and image hashes.
 
 ## Validation and limits
@@ -134,3 +133,15 @@ soak/suspend checks. Implement the solo multi-job and two-victim workload cells,
 then freeze the confirmatory capture design. Real-app presentation instrumentation
 remains independent. No simulator fitting, policy tuning or fourth policy was
 performed.
+
+## Review follow-up (2026-11-04)
+
+The current [protocol](kernel-limit-protocol.md) withdraws six fixed blocks and
+the many per-cell CI gates in favor of a FIFO pilot, pilot-informed sizing, three
+statistical primary criteria and a safety prerequisite. The sole arm registry is
+`trace/kernel/arms.csv`. `trace/kernel/0001-gfx-admission.patch` now omits the
+user-queue default; `0002-test-disable-user-queues.patch` holds that test-only
+change. The scheduler manifest checks the upstream default before patch 2. Empty
+selection probes are suppressed; remaining selection-event counts represent
+nonempty scans, not every priority probe. See
+[kernel-review-validation.txt](kernel-review-validation.txt) for updated checks.

@@ -8,7 +8,7 @@ and fair off/stock, bg1/stock and bg1/skip-cap. Admission and selection are dist
 factors: fair's stock walk stops at a cap-blocked ready entity, so skipping it
 changes effective service order. HIGH/KERNEL are exempt from the additional
 NORMAL/LOW cap, which also includes interactive victims. See the
-[updated protocol](kernel-limit-protocol.md) for per-victim self-cost gates and
+[updated protocol](kernel-limit-protocol.md) for primary/secondary self-cost endpoints and
 the larger fair implementation scope. The all-priority global limit specified
 below remains a distinct diagnostic; the full policy is conditional on hardware
 results. **Upstream v7.2.11 already contains the published vruntime race fix.**
@@ -174,15 +174,10 @@ their limits. Keep the daily stock kernel and default boot entry untouched.
 
 ## Minimum comparisons and decision rule
 
-| Arm | Ordering and admission | Purpose |
-|---|---|---|
-| `fifo/off/stock` | FIFO, original gfx credits and selection | FIFO control. |
-| `fifo/bg1/stock` | FIFO, combined NORMAL/LOW admission cap one | Cap effect with stock priority selection. |
-| `fair/off/stock` | Fair, original credits and selection; merged race fix present | Fair control. |
-| `fair/bg1/stock` | Fair, NORMAL/LOW cap one, stock stop-at-blocked-head selection | Cap-only diagnostic including possible HIGH blocking. |
-| `fair/bg1/skip-cap` | Fair, NORMAL/LOW cap one, skip only extra-cap-blocked candidates | Combined cap and modified selection; compare to capped stock for selection effect. |
-| `fifo-global1-gfx` | FIFO, one gfx credit shared by every priority | Separate all-priority admission diagnostic. |
-| `policy3` (conditional) | Selected policy, explicit admission/selection semantics | Added value beyond simpler interventions. |
+Use the [single arm registry](../kernel/arms.csv) and
+[current pilot/decision protocol](kernel-limit-protocol.md) for all arm definitions,
+boot selectors and inferential roles. A full policy remains conditional on those
+measurements; it is not a current experiment arm.
 
 Before a full-policy claim, also compare its NORMAL/LOW cap without its other
 mechanisms against the all-priority limit. Otherwise the advantage might simply
@@ -196,8 +191,9 @@ window geometry, and the pacing instrumentation specified in plan.md. Cover
 real launches/scrolling/animations, heavy GL/Vulkan hogs, tiny-job floods, two
 hogs, a short-job mimic, video and CPU-only contention. Include no-hog solo
 multi-job victims and two independent NORMAL interactive clients with aligned
-and offset bursts; gate per-client execution, inter-job span, frame latency and
-missed refreshes against matched uncapped cells. Report first-frame
+and offset bursts; report per-client execution, inter-job span, frame latency and
+missed refreshes against matched uncapped cells. Only the current protocol's named
+primary criteria determine the initial FIFO decision; other cell CIs are secondary. Report first-frame
 presentation, missed refreshes, GPU wait, throughput, fairness, maximum wait
 and overhead with run-level uncertainty. Compare at matched throughput cost.
 A kernel change has not succeeded on presentation merely because GPU wait fell.

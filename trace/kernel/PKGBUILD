@@ -44,6 +44,8 @@ source=(
   $url/releases/download/$_srctag/linux-$_srctag.patch.zst{,.sig}
   audited-files.sha256
   0001-gfx-admission.patch
+  scheduler-files.sha256
+  0002-test-disable-user-queues.patch
   patched-files.sha256
 )
 source_x86_64=(
@@ -59,8 +61,10 @@ b2sums=('36a455379876a3f452dce7347211ac34ddfda9a445b0b8c0ee92664429a8ea85d2f1a10
         '06f49715b71884a0cbad51ab4b526c1516926cb2429e7a6e485aa48ebf277811dec391ae2264501245654275a84af1df3780bf8bf8df755cf47670d6c9397703'
         'SKIP'
         '63aaf2a42d90a5d1bb0e8dff9d086cfe41c4e9c5a88ba8f48a9bdd501f171b22fd0cba39e1782d29bbdfd80e2011b71970e80075da2882401783e5bc2e389131'
-        'f29fc757b6b985c8e856fb9658de0e1a97910bfa449550a003415ea3486e7d591c3edf359e9081ebb77f510935668e64f92a72a510047b939c6ebb10f05e3e58'
-        'dcf644a39ceb412d29ac4d47cdd640d9949b2639faf6e9629337b283845407e6f99c4177ef25498f09d5e393ef236c24f23cee759b15edb0b455962f515dcc3b')
+        '02c85d9322a45801cc4abd3a1b2d06b8f00dfdc0d971736e9b41b925f0d72a6483280200d386d2d3972ec531ab1d37dd54afd03a2a863f2adf6534cbf6e2d876'
+        '665637dcca480ec5baac8a2de91741db0ed41dfc425e5eb5be31af1860588f409f6dd478da95cd90c77723d42141f7ec314b288515ec51d5952caea10158a5d1'
+        'ef66a1c8428b277cd4bc44e5080a4cd23b3ff823831a27d5f26d7dab1f0347a664930d8faa10de23dcea507b2651b63dd377aa8a6e21fdc80e4521384ac01202'
+        '3429ce0c5523f5ee0c484c5a0b179b2ae785269c21959dca57483f384c4a6595febd7d72e0a25e42d74e0b972c18284af9da6820839f100775a2ffcc6abc46d1')
 b2sums_x86_64=('58babcf7bed396598de1a7c010292aebb56b2c726f9d8d28344049646d5ed814489db0e22a4e62718e5e6dcc94c581858c17b235e88dc3263fa78934d2a84104')
 
 # https://www.kernel.org/pub/linux/kernel/v7.x/sha256sums.asc
@@ -69,8 +73,10 @@ sha256sums=('fd0fc479f983a8c05313f13e9c36330fe6651cf725396748c40d5cd93fa1e6a4'
         '741d473c4db335d97d9e1d9b8be9337090522550804fe6454ba336d21e580fd6'
         'SKIP'
         '154e70ab08c46d0e3bb282459c674c351adb15d43db1999e82c78f53e40d7acd'
-        '2b3689c06c61147c2366408bf1da0d168d5f95032824fa1fa493688e7860522b'
-        '85b0c5750f38321e3d1308bac97ee2011851f3890ed2aea9807fdfc388f813e3')
+        'b5ec8e533b3c8f14af75d37032bad83bb8e862fe2b309cf978b823fd14f66e0e'
+        'e3a593263b402d5de7c8180e11fac4f53b81b72ead24269b8fe3f43273ea3234'
+        '0ddf0201c32c9263056722ba421348048a02121062d89a2188b8a97914fe9ad1'
+        'bcbcc51aef7aa58a778a1a1394a38123eb45b1c4a779edc29d2116974aa0c7b2')
 
 export KBUILD_BUILD_HOST=archlinux
 export KBUILD_BUILD_USER=$pkgbase
@@ -91,6 +97,9 @@ prepare() {
     [[ $src = *.patch ]] || continue
     if [[ $src = 0001-gfx-admission.patch ]]; then
       sha256sum -c ../audited-files.sha256 || return 1
+    fi
+    if [[ $src = 0002-test-disable-user-queues.patch ]]; then
+      sha256sum -c ../scheduler-files.sha256 || return 1
     fi
     echo "Applying patch $src..."
     patch --fuzz=0 -Np1 < "../$src"
@@ -117,7 +126,8 @@ prepare() {
     echo "kernel_release=$(<version)"
     echo "base=v7.2.11-arch1 (64a90897d3c539033f24105968e3513957e70819)"
     sha256sum .config ../config.$CARCH ../0001-gfx-admission.patch \
-      ../audited-files.sha256 ../patched-files.sha256
+      ../audited-files.sha256 ../scheduler-files.sha256 ../patched-files.sha256 \
+      ../0002-test-disable-user-queues.patch
   } > drmsched-build.txt
   echo "Prepared $pkgbase version $(<version)"
 }

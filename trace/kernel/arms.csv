@@ -1,0 +1,7 @@
+arm,policy,admission,selection,contrast_control,role
+fifo/off/stock,1,0,0,,primary-control
+fifo/bg1/stock,1,1,0,fifo/off/stock,primary-treatment
+fair/off/stock,2,0,0,,secondary-control
+fair/bg1/stock,2,1,0,fair/off/stock,secondary-cap
+fair/bg1/skip-cap,2,1,1,fair/bg1/stock,secondary-selection
+fifo/global1/stock,1,2,0,fifo/off/stock,diagnostic

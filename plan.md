@@ -161,6 +161,27 @@ Update the **Status** and **Next** sections whenever a step finishes.
   suspend/soak, self-cost workload cells and captures remain pending. Compile-only
   x86 config dropped unavailable Rust; it is not the accepted production config.
   **No package installed, stock/default boot modified, or hardware claim added.**
+- **Review corrections implemented (2026-11-04).** The six-block proposal and
+  dozens of tight per-cell CI gates are withdrawn. The
+  [protocol](trace/reports/kernel-limit-protocol.md) now has three GPU/throughput
+  statistical primary criteria for FIFO and a safety prerequisite; presentation
+  means/refresh-slip shares and other cells are secondary, with pacing-mode
+  probes/covariates and explicit endpoint validity. Paired-block t intervals and
+  sign-flip sensitivity replace the small-block percentile bootstrap. A FIFO
+  feasibility pilot precedes choosing/fixing confirmation size; no pilot has run
+  and no confirmatory count is frozen. Added `trace/pilot.py`, `trace/paired.py`
+  and the sole [arm registry](trace/kernel/arms.csv). Empty-queue selection events
+  are suppressed, and the test user-queue default is a separate patch. Updated
+  focused KUnit and x86 checks pass; 30 Python tests pass.
+- **Fair-report sharing/recheck ready; submission requested, not delivered.**
+  Fresh branch API/git/source recheck still finds `e32e83a6c5ec` and the reviewed
+  accounting path. Prepared a 72,793,884-byte allowlisted raw bundle; independent
+  extraction/hash checks and analysis reproduce 21/60 stalls and 5,120 overtakes
+  exactly. An uploaded release draft remains unpublished; a small MIME report
+  is prepared locally. [Delivery handoff](trace/reports/fair-starvation-handoff.md)
+  records source hashes, recipients, archive hash/privacy scope and pending steps.
+  No mail transport/connection is configured; no report sent or raw data publicly
+  published. Finish delivery promptly when a sending path is available.
 - Phase 3: source audit and prototype code/tests implemented; phase 2 fitting and phase 4
   hardware A/B not started.
 
@@ -184,6 +205,8 @@ Update the **Status** and **Next** sections whenever a step finishes.
 | `fair_sleepers.py` | `python3 trace/fair_sleepers.py RUN...`: read-only check of frame-0 stalls, overtaking vkmark queue exhaustion, queued work at release, and nearest HIGH Hyprland submission; see `trace/reports/fair-sleepers.md` |
 | `admission.py` | `python3 trace/admission.py RUN...`: new bg1 captures only; joins dispatch/reservation IDs, validates observed occupancy/credits/priority/serials and trace loss, reports boundary reservations and scan costs; not a global1 or hardware recovery validator |
 | `kernel/` | pinned `linux-drmsched` recipe, admission/selection patch, baseline/patched source manifests and KUnit config; see `kernel/README.md`; production package/boot pending |
+| `pilot.py`, `paired.py` | prepare FIFO pilot order/pacing classification; paired-block t/sign-flip summaries and pilot-only precision planning; no captures/sample count selected yet |
+| `share_fair.py` | build the allowlisted, input-hash-verified fair-report sharing archive without publishing/sending |
 | `compare.py` | `python3 trace/compare.py [LABEL=]MATRIX[,MATRIX]...`: after join.py, per hog × matrix: start latency f0/f1+ p50/p99, presented − intended, Hyprland ms/frame, hog fps and job time |
 | `matrix.sh` | root: `sudo trace/matrix.sh [NAME]`: traced `burst.sh` runs for each hog × DPM condition × `REPS`, plus a `--calib` run per condition, shuffled; restores DPM auto / GFXOFF on exit; rejects unknown `HOGS` names up front; `DRY=1` prints the order |
 | `workloads/real.py` | real victim/control runner: `gtk-launch`, `firefox-scroll`, `compositor`, `mpv`; optional `--hog`/`--cpu-workers`; `--check` validates prerequisites; action/map/geometry/CPU-pressure JSONL, isolated Firefox profile; see the real-study protocol |
@@ -256,20 +279,15 @@ not a new general failure mode. The published locking-race fix is already in
 v7.2.11. This review specifies the minimum comparisons; it does not establish
 novelty for the full policy or replace a broader related-work survey for a paper.
 
-**Required comparisons:** on one identical opt-in test-kernel build, compare
-`fifo/off/stock` and `fifo/bg1/stock`, plus `fair/off/stock`, `fair/bg1/stock`
-and `fair/bg1/skip-cap`. The combined NORMAL/LOW admission cap includes interactive
-clients; HIGH/KERNEL are exempt from that extra cap but still use total credits.
-Fair's stock tree walk stops at a cap-blocked ready head; skipping that head is
-an explicit selection factor, not merely “fair + cap.” Use the capped stock arm
-to separate its effect. Expect more implementation/audit work than under FIFO.
-Keep the all-priority `fifo-global1-gfx` baseline as a separate diagnostic and
-`vk-hog1` as a client-side reference. Gate success on idle solo/multi-job and
-two-interactive-client self-cost as well as hog cost and contention benefit.
-See the [arm definitions and proposed preregistration](trace/reports/kernel-limit-protocol.md).
-A reviewed sleeper-accounting repair is another pinned factor, not stock fair;
-the locking-race fix is already included in v7.2.11. The full policy is conditional
-on measured benefit beyond these interventions.
+**Required comparisons:** the [single arm registry](trace/kernel/arms.csv) and
+[pilot/decision protocol](trace/reports/kernel-limit-protocol.md) define controls,
+contrasts and inferential roles. Begin with the FIFO feasibility/variance pilot;
+fair's admission/selection contrasts and the all-priority limit are secondary or
+diagnostic until separately registered. Preserve physical capacity and measure
+victim self-cost as well as contention benefit. Keep sleeper-accounting repairs
+separate from stock fair. The full policy remains conditional on benefit beyond
+simpler interventions. The gates below concern a future full paper, not dozens
+of extra mandatory CI tests for the initial fixed-cap experiment.
 
 **Full-paper gates:**
 - [ ] Demonstrate the kernel policy on unmodified real victims: application launches,
@@ -299,31 +317,28 @@ with appropriate novelty and scope rather than claiming the full policy is neces
 
 Root steps are for the user; give commands with absolute paths.
 
-The [fair-starvation report draft](trace/reports/fair-starvation-bug-report.md)
-is prepared. Sending is a separate user action; recheck upstream and arrange
-raw-trace sharing as described in its handoff before sending.
+1. **Submit the fair-starvation report promptly.** Submission is requested.
+   The [sharing/delivery handoff](trace/reports/fair-starvation-handoff.md) has
+   the rechecked source/recipients, validated raw bundle, unpublished release
+   draft and locally prepared MIME message. No mail connection/transport is
+   configured. When available, publish/check the reviewed bundle link, recheck
+   upstream if delayed, and send; record the actual Message-ID/archive link.
+   Do not claim the draft asset is already public or the report was sent.
 
-1. **Kernel experiment track; do not wait for real-app presentation tooling.**
-   The [minimum-two source/history audit](trace/reports/amdgpu-submission-audit.md)
-   is complete; the minimum's hardware rationale remains undocumented, so retain
-   the clamp and physical capacity. The [admission/selection patch and tracing](trace/kernel/README.md)
-   are implemented and mock-tested; review the
-   [lifecycle choices and validation limits](trace/reports/gfx-admission-implementation.md).
-   Finish production build dependencies (`bc`, `rust`, `rust-bindgen`, `rust-src`;
-   root command in the handoff) and pin/review any config/toolchain drift before
-   building all arms. Compile/package a separately named,
-   opt-in test kernel, retaining the stock kernel/default entry. First cap combined
-   NORMAL/LOW unfinished jobs at one per measured gfx scheduler, with HIGH/KERNEL
-   exempt from the extra cap and the original total credits unchanged. A total
-   `credit_limit=1` is the separate all-priority baseline, not an implementation
-   of exemptions. Use the existing m3 workload/capture/join path and validate
-   the new diagnostics with `trace/admission.py`; retain the m3 controls. FIFO cap off/on keeps stock selection;
-   fair compares off/stock, bg1/stock and bg1/skip-cap. Add separate solo multi-job
-   and two-NORMAL-client cells to test victim pipelining/self-cost, plus same-session
-   `vk-hog1` references. Perform a short recovery and suspend/
-   resume soak before measurement. Follow the
-   [scope, source audit and preregistration](trace/reports/kernel-limit-protocol.md).
-2. **Real-app presentation track; proceed independently of the kernel track.**
+2. **Kernel FIFO pilot before fixing the block count.** Finish production
+   dependencies/config, compile/package the separately named kernel, prepare
+   its own boot entry and perform recovery/suspend/soak checks while preserving
+   stock/default boot. Follow the [protocol](trace/reports/kernel-limit-protocol.md)
+   and [arm registry](trace/kernel/arms.csv). Generate a recorded pilot order with
+   `trace/pilot.py plan`; run initial off/bg1 boot pairs outside confirmation.
+   Check capped heavy-hog latency against **cap-off, same-policy `vk-hog1`** in
+   the paired block, tiny-flood trace losses/event rate and between-boot variance.
+   Add/pilot solo multi-job and two-victim cells plus throughput-only tiny flood
+   before sizing all primary endpoints. Record pre/post pacing probes; do not
+   reject a boot merely for landing in the other pacing mode. Use `trace/paired.py`
+   for paired t intervals/pilot precision planning, then choose and freeze a
+   complete confirmation design. No fixed count or hardware success yet.
+3. **Real-app presentation track; proceed independently of the kernel track.**
    Pilot GTK launches, Firefox scrolling, Hyprland animations and mpv using the
    [real-study protocol](trace/reports/real-study-protocol.md). Verify one active
    display, geometry/focus, exact builds/options and GPU load survival. Implement
@@ -332,18 +347,19 @@ raw-trace sharing as described in its handoff before sending.
    idle/vkmark pacing with matched settings. This instrumentation is required for
    real-app presentation claims, not the synthetic kernel go/no-go. Do not mix
    newer Hyprland builds with m3 as causal repeats.
-3. **Freeze comparisons before confirmatory capture; decide from hardware.**
-   Record exact source/config/binary hashes, cap semantics, fixed session count,
-   randomized/counterbalanced order, admission/selection factors, throughput
-   ceilings, idle and two-client victim-cost limits, first-frame presentation
-   target and confidence-interval rule. The linked kernel protocol contains explicit
+4. **Freeze comparisons before confirmatory capture; decide from hardware.**
+   Record exact source/config/binary hashes, cap semantics, the pilot-informed
+   fixed session count, randomized/counterbalanced order, admission/selection
+   factors, three primary GPU/throughput criteria, safety prerequisite, secondary
+   presentation/exec/gap outcomes, pacing/validity and paired-block t interval
+   rules. The linked kernel protocol contains explicit
    proposed values, not completed results or an already frozen registration. If a
    fixed cap explains the benefit, retain the simpler design. Investigate adaptive
    admission only where measured costs justify it. Keep the simulator frozen;
    fitting it and implementing `sched_policy=3` are conditional follow-ups, with
    changes to upstream fair the preferred integration direction to investigate.
 
-4. **Optional: policy 1 right after a fresh boot (root, the user; ~7 min).** `m3-p1r`
+5. **Optional: policy 1 right after a fresh boot (root, the user; ~7 min).** `m3-p1r`
    (2026-10-20) was meant to be this but ran in a 13 h old boot with 3 suspend/resumes, so
    the boot-age and second-display confounds in 1.5 are still open. If wanted: disable
    or unplug DP-1, `reboot` (no edit), log in, start nothing else, do not suspend,
@@ -724,7 +740,7 @@ input → client CPU → CS ioctl → [dep wait] → [sched wait: queued, not ye
     drm_sched policy, so session state is a possible cause. The pacing audit also found
     DP-1 active in every p1r metadata file: policy, boot age, and output count are confounded. It moves the
     FIFO numbers by ≤ ~1 ms and changes none of the conclusions above. Settling it needs
-    eDP-1 alone and policy 1 right after a fresh boot (Next 4, optional).
+    eDP-1 alone and policy 1 right after a fresh boot (Next 5, optional).
   - Presentation (corrected by the 2026-11-04 pacing audit): vkmark f1+ p50 is
     ~34 ms in m3-p2 and two m3-p0 runs, ~50 ms in the other m3-p0 run and m3-p1r.
     Thus ~50 ms is not universal across loads/policies; see the pacing report and the real-app presentation track in Next.
@@ -770,9 +786,9 @@ if the hardware study identifies a need for adaptive policy modelling.
   per `trace/reports/kernel-limit-protocol.md`. First test NORMAL/LOW cap one with
   HIGH/KERNEL exempt, then the distinct all-priority credit-limit-one diagnostic.
   Keep hardware fence slots, ring allocation and non-gfx engines unchanged. Test
-  FIFO off/bg1 with stock selection and fair off/stock, bg1/stock and bg1/skip-cap
-  on the exact same binary. Audit skip cost, ordering and completion wakeups;
-  require solo multi-job and two-interactive-client self-cost gates. Mock lifecycle/
+  the registry-defined contrasts on the exact same binary. Audit skip cost, ordering and completion wakeups;
+  report solo multi-job and two-interactive-client self-cost under the protocol's
+  primary/secondary endpoint distinction. Mock lifecycle/
   selection cases pass; real admission/credit/cancellation/reset/suspend and scan-cost
   checks remain. See the implementation report above. Do not duplicate the merged race fix.
 - [ ] 3.2 **Conditional:** only if hardware results justify extra mechanisms, port
@@ -782,7 +798,8 @@ if the hardware study identifies a need for adaptive policy modelling.
 - [ ] 3.3 Conditional on a policy port: equivalence test: build the C selection logic as a shared library, drive it from gpusim
   via ctypes, and check it scores the same as `policy.py`.
 - [~] 3.4 Test-kernel `amdgpu.user_queue=0` default and admission/dispatch/selection
-  tracepoints implemented; verify the setting and events after building/booting.
+  tracepoints implemented; the user-queue default is a separate test-only patch.
+  Verify the setting and events after building/booting.
   These events do not add an actual-HW-start timestamp.
 - [ ] 3.5 Soak test: GPU hang/timeout recovery, suspend/resume, a day of normal use.
 

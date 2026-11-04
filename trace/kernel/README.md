@@ -20,14 +20,10 @@ Both selectors are read-only module parameters, initialized with the scheduler.
 The module is in the initramfs, so choose them on the test kernel's command line.
 `amdgpu.sched_gfx_admission=0` and `amdgpu.sched_gfx_selection=0` are the defaults.
 
-| Arm | `gpu_sched.sched_policy` | `amdgpu.sched_gfx_admission` | `amdgpu.sched_gfx_selection` |
-|---|---:|---:|---:|
-| fifo/off/stock | 1 | 0 | 0 |
-| fifo/bg1/stock | 1 | 1 | 0 |
-| fair/off/stock | 2 | 0 | 0 |
-| fair/bg1/stock | 2 | 1 | 0 |
-| fair/bg1/skip-cap | 2 | 1 | 1 |
-| fifo/global1/stock (separate diagnostic) | 1 | 2 | 0 |
+The sole arm registry is [arms.csv](arms.csv). Print its current boot arguments
+with `python3 trace/kernel/arms.py`, or supply an arm name to print one line.
+Contrast/control roles and primary/secondary scope live in that registry; the
+[protocol](../reports/kernel-limit-protocol.md) defines inference and pilot gates.
 
 Admission 1 caps combined NORMAL/LOW **jobs**, including interactive victims,
 per gfx scheduler. HIGH/KERNEL remain exempt from this extra cap and still use
@@ -39,7 +35,9 @@ required diagnostic. Off/skip-cap reduces to stock eligibility.
 
 Admission 2 sets only gfx scheduler credits to one and includes every priority.
 All modes retain the global submission clamp, physical ring/fence capacity and
-other engines' admission. User queues default to **disabled in this test kernel**;
+other engines' admission. The scheduler patch leaves the upstream user-queue
+default intact. A separate `0002-test-disable-user-queues.patch` makes user queues
+**disabled in this test kernel**;
 verify `amdgpu.user_queue=0` before capture. Kernel/direct submissions remain
 outside the scheduler cap. No sleeper-accounting change is included.
 
@@ -68,8 +66,8 @@ makepkg --noextract --log
 Signature verification stays enabled for the production build. Import missing
 keys only after checking their fingerprints against the recipe/upstream. The
 recipe verifies `audited-files.sha256` after the Arch patch and before the
-research patch, applies patches with zero fuzz, and verifies
-`patched-files.sha256` afterward. Both manifests and the patch are themselves
+research patch, applies the scheduler patch with zero fuzz, verifies `scheduler-files.sha256`,
+then applies the separate test-default patch and verifies `patched-files.sha256`. Both manifests and the patch are themselves
 checksum-pinned sources. A config diff or unexpected kernel release aborts.
 
 The pinned Arch config includes Rust 1.99.0 metadata. Installing a newer
@@ -96,7 +94,8 @@ python3 /home/jinho/Projects/drm-gpu-scheduling/trace/admission.py /absolute/pat
 
 The checker joins background dispatches to reservation IDs, checks priority
 exemptions, cap/credit bounds, identities and consecutive per-scheduler transition
-serials, and reports scan counts/cost. It rejects lost events and missing dispatch
+serials, and reports scan counts/cost. Empty queues emit no selection event;
+selection-event totals therefore count nonempty scans, not every FIFO priority probe. It rejects lost events and missing dispatch
 instrumentation. Reports can arrive in a different cross-CPU order; serials
 establish reservation order. Normal captures may start/end with a live job; the
 output reports those open boundaries. `--require-drained` rejects them for a
@@ -106,8 +105,8 @@ submissions, fairness, presentation latency or successful reset recovery.
 ## Reproduce the focused tests
 
 Use a separate clean source tree: unpack the pinned stable archive, apply the
-Arch patch, verify `audited-files.sha256`, then apply the research patch and
-verify `patched-files.sha256`. Do not generate an in-tree `.config` before the
+Arch patch, verify `audited-files.sha256`, apply patch 1 and verify
+`scheduler-files.sha256`, then apply patch 2 and verify `patched-files.sha256`. Do not generate an in-tree `.config` before the
 out-of-tree KUnit build. With `bc` available, set this path to that source tree:
 
 ```sh
@@ -137,7 +136,7 @@ configured UKI. Renaming `pkgbase` does not complete UKI/boot setup.
 
 Before measurement: validate mixed-priority and two-hog invariants in real traces,
 error/cancellation/reset progress, three suspend/resume cycles and the 30-minute
-soak. Add the solo multi-job and aligned/offset two-victim cells, then freeze the
-confirmatory registration. See the [experiment protocol](../reports/kernel-limit-protocol.md).
+soak. Add the solo multi-job and aligned/offset two-victim cells, then run the FIFO feasibility/variance pilot before choosing and freezing the
+confirmatory block count. See the [experiment protocol](../reports/kernel-limit-protocol.md).
 No installed package, module, preset, UKI, loader entry or stock boot setting was
 changed during this implementation.

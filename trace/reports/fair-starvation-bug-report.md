@@ -1,6 +1,6 @@
 # Draft: drm/sched fair repeated re-entry delays a waiting burst behind tiny jobs
 
-Prepared 2026-11-04. Review draft only; no mail or issue has been sent.
+Prepared and upstream-rechecked 2026-11-04. Mail/attachment prepared locally; not sent.
 
 Suggested subject: `[BUG] drm/sched fair: tiny-job re-entry repeatedly overtakes a waiting burst`
 
@@ -44,8 +44,11 @@ The drm-misc-next `sched_entity.c` SHA-256 is
 `e6183847bb4bb2598fe70934113d2e9a25ec9d1c2e54620f792b0e695ad4ba2a`.
 See the [source manifest](novelty-baselines-sources.json) for source pins.
 
-This is **not a hardware reproduction on drm-misc-next**. Arch's complete
-downstream source/config and capture module hashes have not been reconstructed.
+This is **not a hardware reproduction on drm-misc-next**. The published Arch
+7.2.11 source patch/config have now been retrieved and checksum-verified; the
+[audit](amdgpu-submission-audit.md) confirms its scheduler files match the reviewed
+stable source. Capture-time module hashes/build provenance remain unavailable;
+this does not attest the capture binary.
 The already merged push/pop locking fix
 [`2ab510e63197`](https://github.com/torvalds/linux/commit/2ab510e63197360945f915dd5631a77c63ac6b27)
 is present in upstream v7.2.11 via
@@ -167,15 +170,17 @@ locking and fairness. The withdrawn min_vruntime diff is not a validated fix.
 
 ## Review and submission handoff
 
-The compact evidence and hashes are committed; raw `trace.dat`, `bpf.txt`,
-`burst.csv`, `frames.csv` and metadata remain local under the paths above and
-are gitignored. They are not downloadable from the repository. Before sending,
-prepare a reviewed, shareable trace bundle or arrange a private transfer;
-retain originals matching the manifest. Do not claim raw traces are attached.
+The [sharing/submission handoff](fair-starvation-handoff.md) records the fresh
+upstream source hashes, current-tree recipient resolution and the local sharing
+bundle. The bundle preserves the 15 original files named in the input manifest,
+includes the four analysis modules and compact evidence, and omits unrelated
+fdinfo/desktop logs. It still contains process/thread names, PIDs, timing and
+kernel trace metadata/addresses; it is not anonymized. Originals remain local.
 
-Recheck drm-misc-next immediately before sending and update the source pins if
-it moved. If available, reproduce on that pinned build and retain downstream
-patch/config/module provenance. Resolve recipient addresses from that tree's
-`scripts/get_maintainer.pl` and the existing dri-devel thread; no recipients have
-been contacted. Sending is a separate user action. The full local source and
-trace discussion is in [fair-sleepers.md](fair-sleepers.md).
+Recheck drm-misc-next immediately before actual sending if delivery is delayed.
+The prepared MIME message includes a compact evidence attachment and the future
+public bundle URL; no raw-trace hosting
+URL has been published. No mail or issue has been sent. The remaining delivery
+blocker is a configured mail service capable of sending this message/attachment,
+not a request to reauthorize submission. The full source/trace discussion is in
+[fair-sleepers.md](fair-sleepers.md).

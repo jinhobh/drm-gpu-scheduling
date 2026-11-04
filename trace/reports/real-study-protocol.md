@@ -130,16 +130,19 @@ Mark first-launch vs warm-launch trials; do not clear system caches on the daily
 laptop. Profile creation is repeated per run, so profile state must be treated as
 a controlled part of the workload. Save exact clip and HTML hashes/build versions.
 
-Summarize first-frame and steady-burst outcomes per run. Pair conditions within
-session blocks; report paired differences and 95% confidence intervals from a
-block bootstrap resampling independent sessions (retain complete runs/trials
-within sampled blocks). Do not bootstrap frames as independent observations.
-With five blocks uncertainty estimates are preliminary: add blocks until the
-interval resolves the prespecified practically relevant change (one refresh for
-presentation, and the measured hog-job cost for start latency) or a predefined
-resource cap is reached. Declare the cap before the confirmatory matrix. Avoid
-p99 inference from a few dozen first frames; show distributions/maxima with counts
-and uncertainty limits. Select held-out workloads before tuning phase 2 models.
+Summarize first-frame and steady-burst outcomes per run, then form independent
+paired boot-block differences. Use paired Student t intervals and show all block
+values, with sign-flip sensitivity only under a defensible null symmetry/
+exchangeability assumption; do not use a small-block percentile bootstrap or
+bootstrap frames. Treat the initial five-block real-app pilot as preliminary
+precision work, separate from the kernel FIFO pilot and confirmation. Use pilot
+variation to choose a fixed confirmatory count/resource bound before confirmation;
+do not add confirmation blocks until significance. Follow the
+[kernel protocol](kernel-limit-protocol.md) for primary/secondary scope and pacing
+covariates/endpoint validity. Presentation uses mean latency/refresh-slip shares,
+not 1 ms median gates. State missing/discarded feedback and define denominators.
+Do not infer reliable p99 from a few dozen first frames; select held-out workloads
+before tuning phase 2 models.
 
 The 1.6 report will combine validated real-app captures and the existing m1–m3
 evidence, show latency-breakdown/presentation plots, independent-session uncertainty,

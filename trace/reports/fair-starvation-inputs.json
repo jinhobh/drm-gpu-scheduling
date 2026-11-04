@@ -1,0 +1,81 @@
+{
+  "scope": "Existing m3-p2 capture inputs; raw captures remain local and gitignored. Derived analysis is fair-starvation-evidence.txt.",
+  "analysis_command": "python3 trace/fair_sleepers.py traces/m3-p2/auto-vkmark-cube-r*/*/",
+  "runs": [
+    {
+      "path": "traces/m3-p2/auto-vkmark-cube-r1/20261019-142821",
+      "files": {
+        "trace.dat": {
+          "sha256": "46d83bb4fc94357d42dfd6763ad7409a2f282f4e876e8f1a87ec37ff52947c21",
+          "bytes": 23039156
+        },
+        "bpf.txt": {
+          "sha256": "19fa95160e8c442bf25435be2026499d98358121f4da19f2b0388e5432f96604",
+          "bytes": 15774604
+        },
+        "burst.csv": {
+          "sha256": "4741aa5e5926161a6790fab7c09dd7f3b17a0900d6fe56376ef2c14e6b826b57",
+          "bytes": 40698
+        },
+        "frames.csv": {
+          "sha256": "ca9e63a007fe5c400bd5436c0394340f6335ec8a7f6286311d25ff738830cc4f",
+          "bytes": 28178
+        },
+        "meta.txt": {
+          "sha256": "b2fb825598e5ae48936614b2c9d291cb450bd8e7f56c5b5c86cd3510f3c22665",
+          "bytes": 406
+        }
+      }
+    },
+    {
+      "path": "traces/m3-p2/auto-vkmark-cube-r2/20261019-142843",
+      "files": {
+        "trace.dat": {
+          "sha256": "cf4dfb43acdac4d9fced91bcfe507e7b849fe461d68718b03935d7efc67cec9c",
+          "bytes": 23198308
+        },
+        "bpf.txt": {
+          "sha256": "1afb637b0b10bf2f2c52806ecd57937ac3c9b3348ff18691e04ddaa75d6d2851",
+          "bytes": 15789879
+        },
+        "burst.csv": {
+          "sha256": "8f22bad222393bf92845fb01a81bc027b3945635226eb65dbc17fbeef1bdefa8",
+          "bytes": 40729
+        },
+        "frames.csv": {
+          "sha256": "141945532ebbfc947de17fece89fbafbbc55ebed24dd6f933baf1f80714ffa62",
+          "bytes": 28102
+        },
+        "meta.txt": {
+          "sha256": "6218308af4fe096a2a18d8519df9e4908ba1624700e7b31460f0ec1486d19ceb",
+          "bytes": 406
+        }
+      }
+    },
+    {
+      "path": "traces/m3-p2/auto-vkmark-cube-r3/20261019-142529",
+      "files": {
+        "trace.dat": {
+          "sha256": "031dca0eab15ab8eacca6de2aebe0ab08ecb509383a7b3e0e446d03dda59e6de",
+          "bytes": 22982899
+        },
+        "bpf.txt": {
+          "sha256": "f49698a38a8534a2ffd47cf3b4c9dbd69bf6272487d872ea27f7b2f35e674a1c",
+          "bytes": 15764089
+        },
+        "burst.csv": {
+          "sha256": "442459307bfe7296ab55c7a2a0e485c6bef7c394b9b55bc4a54a838f429b5638",
+          "bytes": 40518
+        },
+        "frames.csv": {
+          "sha256": "67ff2de1ae4df9dde68c9ea1f5f2b00527c175d6448ed8c071f4b7dd2a4566a2",
+          "bytes": 27933
+        },
+        "meta.txt": {
+          "sha256": "200c19b9fbd97d593b2bd650b126dfa18749341d2b0d470f3fa93b521f9342bb",
+          "bytes": 406
+        }
+      }
+    }
+  ]
+}

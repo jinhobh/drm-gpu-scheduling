@@ -83,6 +83,17 @@ the victim's client IDs (Firefox children may own GPU submissions). Do not selec
 only the launcher PID. `join.py` expects burst_client CSV and is not a real-app
 presentation joiner. Real-app per-action attribution/plotting is still pending.
 
+## Relationship to the kernel experiment
+
+Real-app presentation instrumentation does not block the synthetic kernel
+experiment, which reuses burst_client and the m3 harness. Follow the separate
+[kernel protocol](kernel-limit-protocol.md) for FIFO cap off/on and fair
+admission/selection arms, priority exemptions, identical binaries and its fixed-session
+preregistration. Fair/bg1/skip-cap includes a selection change and is not a cap-only
+arm. NORMAL/LOW victims share the cap with hogs.
+The precision-pilot and sampling rules below apply to the real-app measurement
+study, not to that confirmatory kernel comparison.
+
 ## Measurement and statistical plan
 
 Run each victim alone, with heavy Vulkan (`vk-hog`, `vk-hog1`), heavy GL (`gl-hog`),
@@ -91,6 +102,15 @@ CPU+GPU control cells to separate action→submission changes from queue/ring wa
 Compositor animation cells use off-screen GL only until equivalent always-visible
 Vulkan load is available. Keep DPM auto and GFXOFF on for the primary study; use
 the existing pinned-power calibration as a separately labeled control.
+
+Add no-hog solo and two-NORMAL-interactive-client controls. Verify actual jobs per
+frame, including multi-job frames; run two clients with aligned and half-refresh
+offset actions. Attribute GPU execution, inter-job gaps, completion span, delivered
+frames and presentation to each client separately. Compare against matched
+uncapped solo/two-client cells and apply the kernel protocol's proposed self-cost
+gates. Reduced hog interference cannot compensate for a victim losing its own
+pipelining or one interactive client delaying another. These captures are pending;
+map observations and current single-job synthetic coverage do not complete them.
 
 Before any presentation claim, implement Next 3's actual Wayland commit/receipt/
 latch and buffer-readiness instrumentation, or an independently validated visual

@@ -3,9 +3,15 @@
 Source review, 2026-11-04; completes plan.md's novelty/baseline step.
 This specifies future experiments; no kernel policy was implemented or tested here.
 
-The minimum useful comparison is FIFO versus upstream fair versus FIFO with a
-kernel-enforced one-job limit, followed by the proposed policy on the same kernel
-base. **Upstream v7.2.11 already contains the published vruntime race fix.**
+The first comparison uses one identical build: FIFO off/bg1 with stock selection,
+and fair off/stock, bg1/stock and bg1/skip-cap. Admission and selection are distinct
+factors: fair's stock walk stops at a cap-blocked ready entity, so skipping it
+changes effective service order. HIGH/KERNEL are exempt from the additional
+NORMAL/LOW cap, which also includes interactive victims. See the
+[updated protocol](kernel-limit-protocol.md) for per-victim self-cost gates and
+the larger fair implementation scope. The all-priority global limit specified
+below remains a distinct diagnostic; the full policy is conditional on hardware
+results. **Upstream v7.2.11 already contains the published vruntime race fix.**
 The general repeated-re-entry unfairness problem was also described upstream
 before our study. Neither queue-depth limiting nor that problem is a novelty
 claim. A possible contribution remains automatic in-flight control on unmodified
@@ -109,7 +115,11 @@ all applicable arms. An independently written accounting repair must be labeled
 as our experimental repair, with race, debt preservation and fairness checks;
 it must not be presented as upstream fair.
 
-## Global one-job baseline: normative specification
+## All-priority global one-job diagnostic: normative specification
+
+The [updated experiment protocol](kernel-limit-protocol.md) selects `bg1-gfx`
+with HIGH/KERNEL exempt for the first experiment. The definition below is still
+valid for `global1-gfx`, but is not the specification of that priority-exempt cap.
 
 Name the experimental arm `fifo-global1-gfx`. “Global” means shared by **all
 entities using the measured gfx scheduler**, not one job per client and not one
@@ -166,10 +176,13 @@ their limits. Keep the daily stock kernel and default boot entry untouched.
 
 | Arm | Ordering and admission | Purpose |
 |---|---|---|
-| `fifo` | v7.2.11 FIFO, original gfx credit limit (measured as 2) | Uncapped control. |
-| `fair` | Same base, policy 2, original limit; merged race fix already present | Current applicable upstream fairness control; no duplicate “fixed” arm yet. |
-| `fifo-global1-gfx` | FIFO, one gfx credit shared by every priority | Tests whether simple admission control explains the gains. |
-| `policy3` | Selected full policy, same base and original hardware capacity | Tests added value beyond the limit. Record exact priority exemptions and holds. |
+| `fifo/off/stock` | FIFO, original gfx credits and selection | FIFO control. |
+| `fifo/bg1/stock` | FIFO, combined NORMAL/LOW admission cap one | Cap effect with stock priority selection. |
+| `fair/off/stock` | Fair, original credits and selection; merged race fix present | Fair control. |
+| `fair/bg1/stock` | Fair, NORMAL/LOW cap one, stock stop-at-blocked-head selection | Cap-only diagnostic including possible HIGH blocking. |
+| `fair/bg1/skip-cap` | Fair, NORMAL/LOW cap one, skip only extra-cap-blocked candidates | Combined cap and modified selection; compare to capped stock for selection effect. |
+| `fifo-global1-gfx` | FIFO, one gfx credit shared by every priority | Separate all-priority admission diagnostic. |
+| `policy3` (conditional) | Selected policy, explicit admission/selection semantics | Added value beyond simpler interventions. |
 
 Before a full-policy claim, also compare its NORMAL/LOW cap without its other
 mechanisms against the all-priority limit. Otherwise the advantage might simply
@@ -181,12 +194,16 @@ Use identical binaries/settings except the selected intervention, independent
 sessions and counterbalanced policy order, one verified active display, matched
 window geometry, and the pacing instrumentation specified in plan.md. Cover
 real launches/scrolling/animations, heavy GL/Vulkan hogs, tiny-job floods, two
-hogs, a short-job mimic, video and CPU-only contention. Report first-frame
+hogs, a short-job mimic, video and CPU-only contention. Include no-hog solo
+multi-job victims and two independent NORMAL interactive clients with aligned
+and offset bursts; gate per-client execution, inter-job span, frame latency and
+missed refreshes against matched uncapped cells. Report first-frame
 presentation, missed refreshes, GPU wait, throughput, fairness, maximum wait
 and overhead with run-level uncertainty. Compare at matched throughput cost.
 A kernel change has not succeeded on presentation merely because GPU wait fell.
 
-Proceed first with the real-application measurement study. Implement the fixed
-limit before expanding the full policy. If it explains the benefit, the result
+Prepare the fair bug report first after checking drm-misc-next. Proceed with the
+kernel fixed-limit experiment and real-app presentation instrumentation as
+independent tracks. Implement the fixed limit before expanding the full policy. If it explains the benefit, the result
 is a narrower measurement/control study; the simulator score and a known fair
 pathology do not establish novelty for the full scheduler.

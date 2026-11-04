@@ -106,6 +106,27 @@ Update the **Status** and **Next** sections whenever a step finishes.
   so the prerequisite guard rejects the current setup. Map observations and mpv
   counters are not presentation timestamps; real-app presentation instrumentation,
   attribution analysis and the 1.6 report remain unfinished. No new hardware claims.
+- **Execution order revised after critique (2026-11-04):** prepare the fair bug
+  report first; drm-misc-next `e32e83a6c5ec` still has the reviewed empty-pop
+  accounting path. Kernel cap validation and real-app presentation instrumentation
+  are independent tracks. First test gfx NORMAL/LOW cap one with HIGH/KERNEL
+  exempt from the extra admission cap. FIFO keeps stock selection; fair has
+  explicit stock, cap/stock-selection and cap/skip-cap-selection arms on one
+  identical test-kernel build. Solo multi-job and two-interactive-client self-cost
+  are required gates. The all-priority cap remains a distinct diagnostic. See
+  [the experiment protocol and proposed preregistration](trace/reports/kernel-limit-protocol.md).
+  Simulator fitting and a fourth policy are conditional on hardware results.
+- **Fair-starvation bug-report draft done (2026-11-04, former Next 1).**
+  Prepared [the reviewable report](trace/reports/fair-starvation-bug-report.md),
+  [recomputed evidence](trace/reports/fair-starvation-evidence.txt) and
+  [capture input hashes](trace/reports/fair-starvation-inputs.json). Rechecked
+  drm-misc-next through its branch API and git remote: still `e32e83a6c5ec`,
+  with byte-identical `sched_rq.c`. Reanalysis reproduced 21/60 stalls and
+  5,120 overtaking empty pops; all 600 existing frames matched, `ok=1`.
+  Draft includes reproduction/control commands, merged-race-fix status,
+  withdrawn-proposal context and internal-state/provenance limitations.
+  **Not sent; no new hardware capture or kernel change.** Raw traces remain
+  local; prepare a reviewed sharing bundle and recheck upstream before sending.
 - Phases 2–4: not started.
 
 **Tooling (all in `trace/`, captures in `traces/`, gitignored):**
@@ -141,8 +162,8 @@ next to the terminal).
 - Ryzen AI 7 350 / Radeon 860M (GC 11.5.2, MES present), 512 MiB carveout, Hyprland 0.56 (Wayland),
   Mesa 26.2.5.
 - Kernel **7.2.11-arch1-1**. `gpu_sched` is a module.
-  `sched_policy`: 0 = RR, 1 = FIFO (current), **2 = upstream "Fair (experimental)"**, so our
-  policy will be `sched_policy=3`.
+  `sched_policy`: 0 = RR, 1 = FIFO (current), **2 = upstream "Fair (experimental)"**, so an experimental
+  fourth policy would use `sched_policy=3` only if hardware results justify it.
 - `amdgpu.user_queue=-1` (auto), but no client uses user queues: all rendering goes through
   drm_sched (step 0.2).
 - `pp_dpm_sclk` shows min / current / max (600 / ~700 idle / 3000 MHz),
@@ -198,15 +219,20 @@ not a new general failure mode. The published locking-race fix is already in
 v7.2.11. This review specifies the minimum comparisons; it does not establish
 novelty for the full policy or replace a broader related-work survey for a paper.
 
-**Required comparisons:** FIFO, upstream fair with applicable fixes, a simple global
-one-job-in-flight limit, and the full policy. Keep stock fair as a historical baseline
-where useful. A cooperating `vk-hog1` alone is not the global-limit baseline: the latter
-must enforce its limit in the kernel without client changes. The completed
-[baseline specification](trace/reports/novelty-baselines.md) caps every priority, including
-HIGH/KERNEL, per measured gfx scheduler; a NORMAL/LOW-only cap is a separate ablation.
-Upstream v7.2.11 already contains the published locking-race fix, so current stock
-and fixed fair are one arm unless a later reviewed fix is selected. Use the same
-kernel base and settings for causal comparisons.
+**Required comparisons:** on one identical opt-in test-kernel build, compare
+`fifo/off/stock` and `fifo/bg1/stock`, plus `fair/off/stock`, `fair/bg1/stock`
+and `fair/bg1/skip-cap`. The combined NORMAL/LOW admission cap includes interactive
+clients; HIGH/KERNEL are exempt from that extra cap but still use total credits.
+Fair's stock tree walk stops at a cap-blocked ready head; skipping that head is
+an explicit selection factor, not merely “fair + cap.” Use the capped stock arm
+to separate its effect. Expect more implementation/audit work than under FIFO.
+Keep the all-priority `fifo-global1-gfx` baseline as a separate diagnostic and
+`vk-hog1` as a client-side reference. Gate success on idle solo/multi-job and
+two-interactive-client self-cost as well as hog cost and contention benefit.
+See the [arm definitions and proposed preregistration](trace/reports/kernel-limit-protocol.md).
+A reviewed sleeper-accounting repair is another pinned factor, not stock fair;
+the locking-race fix is already included in v7.2.11. The full policy is conditional
+on measured benefit beyond these interventions.
 
 **Full-paper gates:**
 - [ ] Demonstrate the kernel policy on unmodified real victims: application launches,
@@ -232,42 +258,49 @@ defensible benefit over the simple limit on real presentation outcomes, with the
 above addressed. If the simple limit explains the gains, publish that narrower result
 with appropriate novelty and scope rather than claiming the full policy is necessary.
 
-## Next (to-do, in order)
+## Next (priority and independent work tracks)
 
 Root steps are for the user; give commands with absolute paths.
 
-1. **Pilot and capture the real-application study (tooling is ready for pilots;
-   root captures by the user):** follow
-   [the commands and independent-session statistical plan](trace/reports/real-study-protocol.md).
-   Unplug/disable DP-1, verify eDP-1 alone, run `real.py ... --check`, then short
-   no-root pilots for GTK launches, Firefox scrolling, compositor animations and
-   local mpv. Validate geometry/focus and GPU load survival before root captures;
-   add CPU-only and CPU+GPU control cells. The installed versions have changed
-   since m3 (current Hyprland v0.56.2); do not mix old/new builds as causal repeats.
-   Presentation instrumentation (Next 3) is needed before presentation claims.
-   Analyse the resulting real-app traces (1.3b/1.4/1.5), then write the 1.6 report;
-   tooling and a prospective protocol do not complete the measurement study or
-   justify a workshop/short-paper submission decision.
-2. **Carry the completed baseline specification into phases 2–4:**
-   [review/spec](trace/reports/novelty-baselines.md). Use v7.2.11 FIFO, fair with
-   its already merged race fix, `fifo-global1-gfx` and the selected full policy
-   on the same base. Verify Arch source/config/module provenance in phase 3;
-   recheck upstream fixes before implementation. The withdrawn min_vruntime
-   proposal is not a validated patch. Include the NORMAL/LOW-only cap ablation
-   to separate priority exemptions from classification/prediction benefits.
-3. **Targeted pacing follow-up:** the existing-trace investigation is complete; see
-   `trace/reports/compositor-pacing.md`. Before attributing presentation changes to
-   scheduling, record the exact Hyprland/Mesa builds and render options, verify a single
-   active output, and trace actual Wayland commit/receipt/latch plus buffer/fence readiness.
-   Compare idle/vkmark with matched geometry and repeated independent sessions. The present
-   API call is not the actual commit timestamp. This needs new capture instrumentation;
-   the existing traces cannot resolve which buffer the next Hyprland job sampled.
-4. Phase 2 inputs found so far: GFXOFF exit (~1.0 ms before the command buffer starts plus
-   ~0.4 ms slower first job, after ≥ 100 ms idle; the sim has no GFXOFF model), Hyprland job
-   cost (p50 0.29 ms, eDP-1 only), credit_limit 2 as the binding mechanism, the compositor
-   pacing above, and DPM auto's steady exec for light work (0.68–0.97 vs 0.62 ms at high).
+The [fair-starvation report draft](trace/reports/fair-starvation-bug-report.md)
+is prepared. Sending is a separate user action; recheck upstream and arrange
+raw-trace sharing as described in its handoff before sending.
 
-5. **Optional: policy 1 right after a fresh boot (root, the user; ~7 min).** `m3-p1r`
+1. **Kernel experiment track; do not wait for real-app presentation tooling.**
+   Audit why AMDGPU clamps the global submission parameter to two and its fence/
+   ring allocation dependencies before relying on one. Build a separately named,
+   opt-in test kernel, retaining the stock kernel/default entry. First cap combined
+   NORMAL/LOW unfinished jobs at one per measured gfx scheduler, with HIGH/KERNEL
+   exempt from the extra cap and the original total credits unchanged. A total
+   `credit_limit=1` is the separate all-priority baseline, not an implementation
+   of exemptions. Use the existing m3 workload/capture/join path; add invariant
+   tracing without changing the m3 controls. FIFO cap off/on keeps stock selection;
+   fair compares off/stock, bg1/stock and bg1/skip-cap. Add separate solo multi-job
+   and two-NORMAL-client cells to test victim pipelining/self-cost, plus same-session
+   `vk-hog1` references. Perform a short recovery and suspend/
+   resume soak before measurement. Follow the
+   [scope, source audit and preregistration](trace/reports/kernel-limit-protocol.md).
+2. **Real-app presentation track; proceed independently of the kernel track.**
+   Pilot GTK launches, Firefox scrolling, Hyprland animations and mpv using the
+   [real-study protocol](trace/reports/real-study-protocol.md). Verify one active
+   display, geometry/focus, exact builds/options and GPU load survival. Implement
+   protocol/compositor commit, receipt, latch and presented/discarded-buffer timing
+   (or a validated visual method); map polling is not presentation timing. Resolve
+   idle/vkmark pacing with matched settings. This instrumentation is required for
+   real-app presentation claims, not the synthetic kernel go/no-go. Do not mix
+   newer Hyprland builds with m3 as causal repeats.
+3. **Freeze comparisons before confirmatory capture; decide from hardware.**
+   Record exact source/config/binary hashes, cap semantics, fixed session count,
+   randomized/counterbalanced order, admission/selection factors, throughput
+   ceilings, idle and two-client victim-cost limits, first-frame presentation
+   target and confidence-interval rule. The linked kernel protocol contains explicit
+   proposed values, not completed results or an already frozen registration. If a
+   fixed cap explains the benefit, retain the simpler design. Investigate adaptive
+   admission only where measured costs justify it. Keep the simulator frozen;
+   fitting it and implementing `sched_policy=3` are conditional follow-ups, with
+   changes to upstream fair the preferred integration direction to investigate.
+
+4. **Optional: policy 1 right after a fresh boot (root, the user; ~7 min).** `m3-p1r`
    (2026-10-20) was meant to be this but ran in a 13 h old boot with 3 suspend/resumes, so
    the boot-age and second-display confounds in 1.5 are still open. If wanted: disable
    or unplug DP-1, `reboot` (no edit), log in, start nothing else, do not suspend,
@@ -579,7 +612,7 @@ input → client CPU → CS ioctl → [dep wait] → [sched wait: queued, not ye
     50 ms (3 refreshes) for every hog, including vkmark with 0.26 ms GPU wait, vs 33.5 ms
     alone; missed vblanks per frame ~0.8 vs ~0.4. GPU scheduling adds on top: the vk-hog
     p99 of 100 ms and frame 0's +10 ms. The later pacing study shows this is not
-    universal across m3 runs; see `trace/reports/compositor-pacing.md` and Next 3.
+    universal across m3 runs; see `trace/reports/compositor-pacing.md` and the real-app presentation track in Next.
   - DPM auto vs high for light work on an idle GPU: 0.97 vs 0.62 ms exec (m1: 0.74 vs 0.65;
     varies by run, 0.68–0.97). Under load clocks are up and exec is the same.
   - **`m3` (2026-10-19): `sched_policy` 1 (FIFO) / 2 (fair) / 0 (RR)**, DPM auto, GFXOFF on,
@@ -648,16 +681,19 @@ input → client CPU → CS ioctl → [dep wait] → [sched wait: queued, not ye
     drm_sched policy, so session state is a possible cause. The pacing audit also found
     DP-1 active in every p1r metadata file: policy, boot age, and output count are confounded. It moves the
     FIFO numbers by ≤ ~1 ms and changes none of the conclusions above. Settling it needs
-    eDP-1 alone and policy 1 right after a fresh boot (Next 5, optional).
+    eDP-1 alone and policy 1 right after a fresh boot (Next 4, optional).
   - Presentation (corrected by the 2026-11-04 pacing audit): vkmark f1+ p50 is
     ~34 ms in m3-p2 and two m3-p0 runs, ~50 ms in the other m3-p0 run and m3-p1r.
-    Thus ~50 ms is not universal across loads/policies; see the pacing report and Next 3.
+    Thus ~50 ms is not universal across loads/policies; see the pacing report and the real-app presentation track in Next.
     The p99 differences (67–100 ms) are one refresh apart and noisy with 3 runs.
 - [ ] 1.6 Measurement report: latency-breakdown and presentation plots per scenario,
   independent-run uncertainty, confounds, related-work comparison and reproducible artifact.
   Assess a workshop/short-paper submission using the research-direction gates above.
 
-## Phase 2: fit the simulator (reuses the phase 1 traces)
+## Phase 2: conditional simulator fitting (after the simple kernel experiment)
+
+Do not make this phase a prerequisite for the fixed-limit test kernel. Proceed only
+if the hardware study identifies a need for adaptive policy modelling.
 
 - [ ] 2.1 Freeze the current sim as v1 (tag it) so old scores stay comparable.
 - [ ] 2.2 Measure `DEFAULT_CFG` constants (`submit_us`, `ctx_switch_us`, `sched_wake_us`, SDMA
@@ -672,24 +708,28 @@ input → client CPU → CS ioctl → [dep wait] → [sched wait: queued, not ye
   path. v7.2.11 already has the merged race fix; distinguish any later reviewed
   accounting fix by exact patch identity rather than inventing a second fixed arm.
 - [ ] 2.7 Re-score all baselines and `policy.py`. If the ranking FIFO > fair > policy holds,
-  compare with a simple global one-job limit before phase 3. If the ranking flips or the
-  margin collapses, revisit the mechanisms on the fitted sim first. Simulator ranking
-  guides implementation; it does not establish the paper's hardware claim.
+  compare with the already measured simple admission baselines before expanding
+  the policy. If the ranking flips or the margin collapses, revisit the mechanisms.
+  Simulator ranking guides additional implementation; it does not establish the
+  paper's hardware claim.
 
 ## Phase 3: side-by-side test kernel
 
 - [ ] 3.1 Package `linux-drmsched`: Arch's 7.2.11 PKGBUILD with `pkgbase` renamed, its own
   boot entry; the stock kernel stays the default.
-- [ ] 3.1b Implement the kernel-enforced global one-job baseline and applicable upstream
-  fair fixes on the same test-kernel base. Follow
-  `trace/reports/novelty-baselines.md`: gfx-only initialization credit limit 1, all priorities included, unit-credit and bypass-path audit; do not
-  reapply the race fix already in v7.2.11. Pin Arch provenance and any new patches;
-  retain the stock kernel and default boot entry untouched.
-- [ ] 3.2 Port the selected policy from the fitted simulator to C as `sched_policy=3` in `drivers/gpu/drm/scheduler`: fixed-point
-  instead of floats, hrtimer to re-run selection after a hold, per-entity state in
-  `drm_sched_entity` (fine here because amdgpu is rebuilt in the same tree), hooks at
-  push/run/free/entity_init and fence deadline.
-- [ ] 3.3 Equivalence test: build the C selection logic as a shared library, drive it from gpusim
+- [ ] 3.1b Audit the minimum-two clamp and implement opt-in gfx admission modes
+  per `trace/reports/kernel-limit-protocol.md`. First test NORMAL/LOW cap one with
+  HIGH/KERNEL exempt, then the distinct all-priority credit-limit-one diagnostic.
+  Keep hardware fence slots, ring allocation and non-gfx engines unchanged. Test
+  FIFO off/bg1 with stock selection and fair off/stock, bg1/stock and bg1/skip-cap
+  on the exact same binary. Audit skip cost, ordering and completion wakeups;
+  require solo multi-job and two-interactive-client self-cost gates. Do not
+  duplicate the already merged race fix. Complete credit/cancellation/reset and suspend checks.
+- [ ] 3.2 **Conditional:** only if hardware results justify extra mechanisms, port
+  the smallest selected policy. Prefer investigating changes to fair; a research
+  `sched_policy=3` is not a committed upstream interface. Document any prediction,
+  hold timers and per-entity state, and ablate their independent benefit.
+- [ ] 3.3 Conditional on a policy port: equivalence test: build the C selection logic as a shared library, drive it from gpusim
   via ctypes, and check it scores the same as `policy.py`.
 - [ ] 3.4 Default `amdgpu.user_queue=0` on this kernel. Add tracepoints if phase 1 found gaps
   (e.g. actual HW start).
@@ -698,7 +738,9 @@ input → client CPU → CS ioctl → [dep wait] → [sched wait: queued, not ye
 ## Phase 4: hardware A/B
 
 - [ ] 4.1 Re-run the phase 1 matrix on the same test-kernel base: FIFO, fixed upstream fair,
-  global one-job limit and full policy (stock fair/RR as additional historical controls).
+  admission and selection arms defined in the kernel protocol, including solo
+  multi-job and two-interactive-client cells, then the all-priority diagnostic; include a
+  full policy only if justified (RR remains an optional historical control).
   Include real application victims, independent repetitions, controlled session state,
   counterbalanced policy order and confidence intervals for paired comparisons.
 - [ ] 4.1b Run the mechanism ablations specified above. Compare presentation latency and

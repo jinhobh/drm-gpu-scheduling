@@ -27,7 +27,7 @@ Philipp Stanner and Christian König at the addresses in that pinned MAINTAINERS
 
 - Local archive: `/home/jinho/Projects/drm-gpu-scheduling/.cache/fair-report-share/fair-starvation-20261104.tar.xz`
 - Size: 72793884 bytes; SHA-256 `19b9dc9df8f401c3ca8f75394f1e09cc1972837d1bc56d05cfe6c303fb5f8e6c`.
-- [Unpublished release draft](https://github.com/jinhobh/drm-gpu-scheduling/releases/tag/untagged-66de5e0ad2c7bd8c228b) has the uploaded asset. Its
+- [Unpublished release draft](https://github.com/jinhobh/drm-gpu-scheduling/releases) (`fair-starvation-20261104`) has the uploaded asset. Its
   download URL is not public until publication; do not send the draft URL as
   if maintainers can already download it.
 - Includes 15 original hash-matched inputs, four analysis modules, input manifest,

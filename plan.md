@@ -194,7 +194,11 @@ Update the **Status** and **Next** sections whenever a step finishes.
   vk-hog 12–15; 297/300 victim jobs had no hog job ahead). Skip-cap skipped 2,436
   times. Same boot, ~80 min use + 1 of 3 suspend/resumes: no GPU errors, cap count
   back to zero, two repeats gave victim 6.0–6.2 ms (frame-0 start p50 2.5/7.0 ms).
-  Pilot evidence only: 2 suspends, recovery, throughput and self-cost still pending.
+  Then 2 more suspends (3/3 clean) and a forced MODE2 GPU reset with a NORMAL job
+  in flight: it was cancelled and its reservation released (3,689/3,689 matched,
+  count 0), NORMAL work dispatched afterwards. Hyprland crashed and restarted in
+  safe mode (userspace, config untouched). **Safety prerequisites done for this
+  arm.** Throughput and self-cost still pending.
   The FIFO off/bg1 primary contrast cannot show the NORMAL-victim benefit; the
   protocol's primary contrast moves to fair off vs fair bg1/skip-cap.
 - Phase 3: prototype built, installed and first-booted; phase 2 fitting and phase 4
@@ -343,9 +347,11 @@ Root steps are for the user; give commands with absolute paths.
 
 2. **Kernel pilot before fixing the block count; primary contrast is now fair.**
    The kernel is built/installed and first-booted
-   ([pilot report](trace/reports/kernel-cap-first-boots.md)). The
-   `fair/bg1/skip-cap` soak is done except two more suspend/resume cycles; then a
-   recovery check. Then pilot **fair/off vs fair/bg1/skip-cap** pairs
+   ([pilot report](trace/reports/kernel-cap-first-boots.md)). Soak, three
+   suspend/resumes and a forced GPU reset are done for `fair/bg1/skip-cap`. Before
+   the pilot: implement the solo multi-job, two-victim and throughput-only
+   tiny-flood cells, and consider the kernel-side `start_wait.py` measure for the
+   GPU-benefit endpoint (victim timestamp correction can be loose). Then pilot **fair/off vs fair/bg1/skip-cap** pairs
    (FIFO off/bg1 remains a secondary compositor-protection contrast). Follow the
    [protocol](trace/reports/kernel-limit-protocol.md) and
    [arm registry](trace/kernel/arms.csv); `trace/pilot.py plan` still generates

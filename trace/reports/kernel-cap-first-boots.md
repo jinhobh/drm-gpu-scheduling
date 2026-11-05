@@ -101,6 +101,38 @@ frame-0 GPU start p50 6.99 and 2.48 ms (p99 9.39, 8.34), within the m3 `vk-hog1`
 range (3.1–7.0 ms p50) and below the m3 uncapped `vk-hog` range (8.7–14.4 ms).
 Repeats on one boot are not independent blocks.
 
+Two further suspend/resume cycles (`systemctl suspend`, ~1 min each) completed
+on the same boot, each with "SMU is resumed successfully" and no GPU error:
+**three of three done.**
+
+## GPU recovery test (fair/bg1/skip-cap, same boot)
+
+`traces/reset-check/20261104-231647`: forced reset via debugfs
+`amdgpu_gpu_recover` about 20 s into a `vk-hog` burst run.
+
+- Kernel: `GPU reset begin! ... MODE2 reset ... GPU reset(1) succeeded!`, every
+  ring reinitialised.
+- Exactly one NORMAL job was in flight. Its finished fence signalled with
+  `-ECANCELED` and the reservation was released through the finished-fence path
+  (`action=1`, count -> 0). Acquisitions and releases matched, 3,689 / 3,689, and
+  `admission.py` passed across the reset (initial = final = 0, no serial gaps;
+  max selection 29.5 us).
+- After the reset, other NORMAL clients kept acquiring and releasing until the
+  capture ended, and a fresh NORMAL `burst_client --probe` submitted and completed
+  at once: no stuck cap.
+- Userspace side effects, not scheduler faults: Hyprland crashed (no GPU-reset
+  robustness) and its watchdog restarted it in `--safe-mode` (built-in defaults;
+  `~/.config/hypr` untouched). The victim reported `context is lost ... innocent`,
+  then blocked in `drm_syncobj_array_wait` on the fence of its failed submission
+  and had to be killed for the capture to finish. The MODE2 reset also reset the
+  GPU timestamp counter (probe offset jumped ~-10,652 s): reboot before measuring.
+- The same reset was not run on the stock kernel or a cap-off arm, so the
+  Hyprland/victim behaviour is not attributed to or cleared for the cap.
+
+**Safety prerequisites done for fair/bg1/skip-cap:** ~80 min soak, three
+suspend/resume cycles, one forced reset with a job in flight. Not covered: a real
+(timeout-detected) hang, other arms' recovery, repeated resets.
+
 ## Limits
 
 One run per arm, one boot each, fresh boots, no same-boot uncapped control

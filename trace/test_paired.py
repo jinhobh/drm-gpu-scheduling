@@ -52,6 +52,22 @@ class PilotTest(unittest.TestCase):
         self.assertEqual({r['arm'] for r in fifo}, {'fifo/off/stock', 'fifo/bg1/stock'})
         self.assertTrue(all(r['mechanism_reference'] == 'fifo/off/stock' for r in fifo))
 
+    def test_sessions_include_every_extra_cell_repetition(self):
+        rows = pilot.plan(7)
+        reps = sum(r for *_, r in pilot.EXTRA_CELLS)
+        orders = set()
+        for row in rows:
+            lines = row['commands'].splitlines()
+            extra = [l for l in lines if 'workloads/' in l and '-pre --' not in l
+                     and '-post --' not in l]
+            self.assertEqual(len(extra), reps)
+            names = [l.split()[2] for l in extra]
+            self.assertEqual(len(set(names)), reps)
+            self.assertTrue(all(n.startswith(row['matrix'] + '-') for n in names))
+            self.assertTrue(lines[-1].split()[2].endswith('-post'))
+            orders.add(tuple(n.split(row['matrix'])[1] for n in names))
+        self.assertGreater(len(orders), 1)  # sessions are shuffled independently
+
     def test_pacing_modes_and_missing_feedback(self):
         def rows(values):
             return [dict(frame=1, paced=1, latency=v) for v in values]

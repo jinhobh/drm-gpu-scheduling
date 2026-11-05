@@ -23,6 +23,30 @@ spec.loader.exec_module(arms)
 PAIRS = {'fair': ['fair/off/stock', 'fair/bg1/skip-cap'],
          'fifo': ['fifo/off/stock', 'fifo/bg1/stock']}
 
+VICTIM = '--iters 736 -n 10 -b 20'
+# Self-cost and throughput cells beyond the m3 matrix: (label, workload script, args, reps).
+# Primary self-cost: the two-client three-job cells; primary throughput: vk-hog (matrix) and
+# the flood cell. Solo multi-job and two-client single-job cells are secondary.
+EXTRA_CELLS = [
+    ('multi', 'burst.sh', f'none {VICTIM} -i 300 --jobs 3', 3),
+    ('two-aligned-j3', 'two_victims.sh', f'aligned {VICTIM} --jobs 3', 3),
+    ('two-offset-j3', 'two_victims.sh', f'offset {VICTIM} --jobs 3', 3),
+    ('flood', 'flood.sh', 'vkmark-cube 20', 3),
+    ('two-aligned-j1', 'two_victims.sh', f'aligned {VICTIM}', 1),
+    ('two-offset-j1', 'two_victims.sh', f'offset {VICTIM}', 1),
+]
+
+
+def extra_commands(name, rng):
+    """Capture commands for EXTRA_CELLS, every repetition, in a seeded random order."""
+    capture = shlex.quote(str(REPO / 'trace/capture.sh'))
+    runs = [(label, script, args, rep) for label, script, args, reps in EXTRA_CELLS
+            for rep in range(1, reps + 1)]
+    rng.shuffle(runs)
+    return [f'sudo {capture} {name}-{label}-r{rep} -- '
+            f'{shlex.quote(str(REPO / "trace/workloads" / script))} {args}'
+            for label, script, args, rep in runs]
+
 
 def plan(seed, blocks=3, pair='fair'):
     if blocks < 2:
@@ -46,6 +70,7 @@ def plan(seed, blocks=3, pair='fair'):
                 f'sudo {capture} {name}-pre -- {burst} none {probe}',
                 f'sudo DPMS=auto REPS=3 HOGS="none vk-hog vk-hog1 vkmark-cube" '
                 f'{shlex.quote(str(REPO / "trace/matrix.sh"))} {name}',
+                *extra_commands(name, random.Random(f'{seed}-{block}-{session}')),
                 f'sudo {capture} {name}-post -- {burst} none {probe}',
             ])
             rows.append(dict(stage='pilot', seed=seed, block=block, session=session,

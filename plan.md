@@ -50,6 +50,8 @@ Run-by-run detail and the dated status log up to 2026-11-04 are in
    queued and older, so FIFO serves it before the victim (697/700 victim jobs).
    Fair serves the least-serviced client, so the victim goes next (897/900 victim
    jobs had no hog job ahead). One boot per arm: pilot evidence, not a result.
+   The first boots ran with DP-1 also active, unlike m3-p2, so the m3 rows are
+   context, not controls. The FIFO-cap vs fair-cap contrast shares the setup.
 5. **The fair + cap arm survived the safety checks:** ~80 min of use, 3/3
    suspend/resumes, and a forced MODE2 GPU reset with a job in flight (cancelled,
    slot released, 3,689/3,689 acquire/release matched, later work dispatched).
@@ -113,14 +115,19 @@ needs service-based ordering. It is not a new general mechanism.
 
 ### Kernel track (main line)
 
-1. **Add the missing pilot test cells.** Agent work, no root; see the protocol's
-   self-cost section.
-   - **Solo multi-job victim:** ≥ 3 timestamped jobs per frame at constant total
-     GPU work, with the jobs/frame count verified in traces.
-   - **Two NORMAL victims**, aligned and offset by half a refresh.
-   - **Throughput-only tiny-job flood**, not limited by presentation.
-   - **Hog throughput (fps/jobs per second) in every summary.**
-   - Add these cells to `trace/pilot.py plan` (it currently runs only m3 cells).
+1. **Pilot test cells: done (2026-11-04), not yet run on the test kernel.**
+   - Solo multi-job victim: `burst_client --jobs 3`.
+   - Two NORMAL victims, aligned and offset: `workloads/two_victims.sh`.
+   - Throughput-only flood: `workloads/flood.sh`.
+   - Summaries: `selfcost.py` and `throughput.py`.
+   - `pilot.py plan` adds 14 captures per session. Cell table:
+     [protocol](trace/reports/kernel-limit-protocol.md), self-cost section.
+   - Tried without tracing on the stock kernel: 3 jobs/frame kept total GPU work
+     within 0.8%, and the two victims tiled at a constant 512×512 work area with
+     burst starts 7.5–8.4 ms apart (target 8.33 ms).
+   - Early hint from existing traces: under the cap the heavy hog kept ~117
+     jobs/s, vs ~118 uncapped and 108 for `vk-hog1` in m3. Different
+     sessions, so the pilot decides.
 2. **Primary GPU-benefit measure: decided (2026-11-04).**
    - Primary: kernel-side wait until GPU start, for burst frame 0:
      `python3 trace/start_wait.py --frame0 RUN...`, after `parse.py` and `join.py`.
@@ -132,6 +139,10 @@ needs service-based ordering. It is not a new general mechanism.
      while frames 1+ separate sharply (12.1–13.3 vs 4.7–4.9 ms). Any switch must
      be made and disclosed before freezing (protocol, primary criterion 1).
 3. **Fair pilot: 3 boot pairs, 6 boots (the user runs it, as root).**
+   - **Disconnect or disable DP-1 first.** Every first-boot capture had both
+     displays active.
+   - Each session is about 19 root commands (~20 min). A small per-session runner
+     would avoid repeated sudo prompts; write it before starting.
    - Generate the order with
      `python3 /home/jinho/Projects/drm-gpu-scheduling/trace/pilot.py plan --seed N --out PATH`
      (fair pair by default).
@@ -260,8 +271,12 @@ policy modelling.
 | `capture.sh` | root: `sudo trace/capture.sh NAME [SECONDS] -- WORKLOAD...` records trace-cmd (`-C mono`), bpftrace (`bpf/ids.bt`), fdinfo (`clients.py`), `gpu_metrics.py` and kernel/module/selector provenance while running WORKLOAD as the user in the Hyprland session; writes `traces/NAME/<timestamp>/` |
 | `matrix.sh` | root: `sudo trace/matrix.sh [NAME]`: traced `burst.sh` runs per hog × DPM condition × `REPS` plus calibration, shuffled; `DRY=1` prints the order |
 | `workloads/burst.sh` | `burst.sh HOG [BURST_CLIENT_ARGS]`: empty workspace, timestamp probe, hog warm-up, then burst_client. m3 settings: `--iters 736 -n 10 -i 300 -b 20` |
+| `workloads/two_victims.sh` | `two_victims.sh aligned\|offset [BURST_CLIENT_ARGS]`: two tiled burst_clients on a shared burst grid (B offset half a refresh); logs `burst-a.csv`, `burst-b.csv` |
+| `workloads/flood.sh` | `flood.sh HOG SECONDS`: one load alone on an empty workspace (throughput-only cell) |
 | `workloads/hog.sh` | background loads: `vk-hog` (8 ms jobs), `vk-hog1` (1 in flight), `gl-hog` (off-screen 8.5 ms), `vkmark-cube` (tiny-job flood), `glmark2-*`, `stk`, `mpv`, `none` |
-| `burst_client/` | ground-truth Vulkan + Wayland burst source with per-frame CSV (submit, GPU start/end, presented); `burst_client --help` |
+| `burst_client/` | ground-truth Vulkan + Wayland burst source with per-frame CSV (submit, GPU start/end, presented); `--jobs K` splits a frame into K chained submissions, `--tile`, `--grid-ms/--start-at/--offset-us` for shared burst schedules; `burst_client --help` |
+| `selfcost.py` | `python3 trace/selfcost.py RUN...` (after `join.py`, per log): per-victim kernel-side span, summed exec, between-job time, frame-0 wait, jobs/frame, presented share, skipped vblanks, delivered fps |
+| `throughput.py` | `python3 trace/throughput.py RUN...`: steady jobs/s, exec and GPU busy share per gfx client (warm-up and tail dropped) |
 | `parse.py` | `python3 trace/parse.py RUN`: per-job breakdown to `RUN/jobs.csv` (`credit_wait` assumes credit limit 2 and does not know the bg1 cap) |
 | `join.py` | `python3 trace/join.py RUN...`: burst.csv × trace → `RUN/frames.csv` with submit/dep/order/pick/credit/ring/wake split (assumes credit limit 2: under the bg1 cap, cap-blocked time is labelled `pick`) |
 | `start_wait.py` | `python3 trace/start_wait.py RUN... [--ahead \| --frame0]`: victim/Hyprland kernel wait until GPU start (no GPU timestamp correction); `--ahead` counts hog jobs dispatched ahead of each ready victim job; `--frame0` prints the **primary measure** (frame-0 kernel wait per run) with the aligned app-measured cross-check and frames 1+ |
@@ -283,7 +298,8 @@ policy modelling.
   primary measure is kernel-side. A run whose kernel and aligned app frame-0
   medians differ by > 0.5 ms needs investigation.
 - **Session confounds:** boot age and a second display (DP-1) changed Hyprland's
-  cost in m3-p1r, and pacing mode varies by session. Use eDP-1 only, record pacing
-  probes, and counterbalance boot order.
+  cost in m3-p1r, and pacing mode varies by session. **DP-1 was active in all
+  first-boot captures**, so their comparison with m3 is confounded. Use eDP-1 only,
+  record pacing probes, and counterbalance boot order.
 - **Hyprland crashes on GPU reset** and restarts in safe mode (config untouched).
 - **Single machine and compositor.** Generalization needs a second configuration.

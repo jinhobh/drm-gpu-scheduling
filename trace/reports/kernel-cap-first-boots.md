@@ -135,6 +135,12 @@ suspend/resume cycles, one forced reset with a job in flight. Not covered: a rea
 
 ## Limits
 
+**Both outputs were active in every first-boot capture** (`monitors.json`: eDP-1
+1920x1200@60 and DP-1 2560x1440@75), unlike m3-p2/m3-p0 (eDP-1 only). The m3 rows
+in the tables are therefore context with a different output configuration, not
+controls; the FIFO-cap vs fair-cap contrast shares the configuration. Found
+2026-11-04 while building the pilot cells; the pilot must run with eDP-1 alone.
+
 One run per arm, one boot each, fresh boots, no same-boot uncapped control
 (mechanism reference must be the same-policy cap-off `vk-hog1` in a paired boot),
 different burst settings for the FIFO run, a loose victim timestamp correction in

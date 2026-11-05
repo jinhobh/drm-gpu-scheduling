@@ -59,6 +59,10 @@ static const uint32_t frag_spv[] =
 
 #define MAX_IMAGES 8
 #define MAX_INFLIGHT 4
+#define MAX_JOBS 8
+/* timestamp queries: 2 per job (start, end), slot-major; the probe uses the one after */
+#define QUERY(slot, job) (2 * ((uint32_t)(slot) * MAX_JOBS + (uint32_t)(job)))
+#define PROBE_QUERY QUERY(MAX_INFLIGHT, 0)
 #define MAX_IDLE 32
 #define FRAME_CB_TIMEOUT_NS 200000000LL
 
@@ -88,14 +92,19 @@ static struct {
 	double first_mult;      /* frame 0 of a burst costs this many times more */
 	int work;               /* side of the square work area, px */
 	int inflight;
+	int jobs;               /* GPU submissions per frame, the work split evenly */
 	bool pace_frame;        /* wait for wl_surface.frame before each frame (else FIFO only) */
 	VkPresentModeKHR present;
 	bool probe_only;
+	bool tile;              /* no fixed size: let the compositor tile the window */
+	int grid_ms;            /* >0: burst b starts at start_at + offset + b * grid_ms */
+	int64_t start_at;       /* CLOCK_MONOTONIC ns of the grid origin (0 = first burst) */
+	int64_t offset_ns;
 	int width, height;      /* requested window size (the compositor may change it) */
 	const char *out;
 } opt = {
 	.frames = 30, .idle_ms = {500}, .n_idle = 1, .seed = 1, .cost_us = 2000,
-	.first_mult = 1, .work = 512, .inflight = 2, .pace_frame = true,
+	.first_mult = 1, .work = 512, .inflight = 2, .jobs = 1, .pace_frame = true,
 	.present = VK_PRESENT_MODE_FIFO_KHR, .width = 800, .height = 600,
 };
 
@@ -113,6 +122,12 @@ static void usage(void)
 		"  -f, --first-mult X    frame 0 of each burst costs X times more (1)\n"
 		"  -w, --work PX         side of the square work area in px (512)\n"
 		"      --inflight N      frames in flight, 1..%d (2)\n"
+		"      --jobs K          split each frame's work into K back-to-back submissions\n"
+		"                        (kernel jobs) chained by semaphores, 1..%d (1)\n"
+		"      --tile            no fixed window size, so the compositor tiles the window\n"
+		"      --grid-ms P       start burst b at ORIGIN + OFFSET + b * P instead of idling\n"
+		"      --start-at NS     grid ORIGIN in CLOCK_MONOTONIC ns (default: first burst)\n"
+		"      --offset-us US    grid OFFSET (0), e.g. half a refresh for a second client\n"
 		"      --pace MODE       frame: wait for wl_surface.frame callbacks like a toolkit\n"
 		"                        (default); fifo: rely on FIFO present only\n"
 		"      --present MODE    fifo (default), mailbox or immediate; with --pace fifo and\n"
@@ -121,7 +136,7 @@ static void usage(void)
 		"      --calib           preset: idle 1..3000 ms shuffled, 8-frame bursts, 5 rounds\n"
 		"      --probe           measure and cache the GPU timestamp correction, then exit\n"
 		"                        (exit 1 if the GPU was too busy for a tight probe)\n"
-		"  -o, --out FILE        CSV log (stdout)\n", MAX_INFLIGHT);
+		"  -o, --out FILE        CSV log (stdout)\n", MAX_INFLIGHT, MAX_JOBS);
 	exit(2);
 }
 
@@ -137,14 +152,16 @@ static void parse_idle(const char *s)
 
 static void parse_args(int argc, char **argv)
 {
-	enum { O_SEED = 256, O_ITERS, O_INFLIGHT, O_SIZE, O_CALIB, O_PACE, O_PRESENT, O_PROBE };
+	enum { O_SEED = 256, O_ITERS, O_INFLIGHT, O_SIZE, O_CALIB, O_PACE, O_PRESENT, O_PROBE,
+	       O_JOBS, O_TILE, O_GRID, O_START, O_OFFSET };
 	static const struct option lo[] = {
 		{"frames", 1, 0, 'n'}, {"idle-ms", 1, 0, 'i'}, {"shuffle", 0, 0, 's'},
 		{"seed", 1, 0, O_SEED}, {"bursts", 1, 0, 'b'}, {"cost-us", 1, 0, 'c'},
 		{"iters", 1, 0, O_ITERS}, {"first-mult", 1, 0, 'f'}, {"work", 1, 0, 'w'},
 		{"inflight", 1, 0, O_INFLIGHT}, {"size", 1, 0, O_SIZE}, {"calib", 0, 0, O_CALIB},
 		{"pace", 1, 0, O_PACE}, {"present", 1, 0, O_PRESENT},
-		{"probe", 0, 0, O_PROBE},
+		{"probe", 0, 0, O_PROBE}, {"jobs", 1, 0, O_JOBS}, {"tile", 0, 0, O_TILE},
+		{"grid-ms", 1, 0, O_GRID}, {"start-at", 1, 0, O_START}, {"offset-us", 1, 0, O_OFFSET},
 		{"out", 1, 0, 'o'}, {"help", 0, 0, 'h'}, {0},
 	};
 	int c;
@@ -189,12 +206,19 @@ static void parse_args(int argc, char **argv)
 				usage();
 			break;
 		case O_PROBE: opt.probe_only = true; break;
+		case O_JOBS: opt.jobs = atoi(optarg); break;
+		case O_TILE: opt.tile = true; break;
+		case O_GRID: opt.grid_ms = atoi(optarg); break;
+		case O_START: opt.start_at = strtoll(optarg, NULL, 10); break;
+		case O_OFFSET: opt.offset_ns = llround(atof(optarg) * 1000); break;
 		case 'o': opt.out = optarg; break;
 		default: usage();
 		}
 	}
 	if (optind != argc || opt.frames < 1 || opt.work < 1 || opt.inflight < 1 ||
-	    opt.inflight > MAX_INFLIGHT || opt.first_mult <= 0)
+	    opt.inflight > MAX_INFLIGHT || opt.first_mult <= 0 || opt.jobs < 1 ||
+	    opt.jobs > MAX_JOBS || opt.grid_ms < 0 || opt.offset_ns < 0 ||
+	    ((opt.start_at || opt.offset_ns) && !opt.grid_ms))
 		usage();
 }
 
@@ -208,6 +232,8 @@ struct frame {
 	uint32_t iters, ext_w, ext_h, area_w, area_h, image;
 	int64_t t_intended, t_start, t_acquired, t_submit, t_submit_ret, t_present, t_present_ret;
 	int64_t gpu_start, gpu_end, presented;
+	int64_t exec_sum, gpu_gaps;  /* summed per-job GPU exec; gaps between the frame's jobs */
+	int jobs;
 	uint32_t refresh_ns, flags;
 	uint64_t msc;
 	int state;
@@ -391,9 +417,13 @@ static void wl_init(void)
 	xdg_toplevel_set_title(W.top, "burst_client");
 	xdg_toplevel_set_app_id(W.top, "burst_client");
 	/* fixed size: Hyprland floats it instead of tiling it next to other windows, so the
-	 * work area (clipped to the window) and the frame cost do not depend on the layout */
-	xdg_toplevel_set_min_size(W.top, opt.width, opt.height);
-	xdg_toplevel_set_max_size(W.top, opt.width, opt.height);
+	 * work area (clipped to the window) and the frame cost do not depend on the layout.
+	 * --tile: two victims on an empty workspace tile side by side, both fully visible; the
+	 * work area stays --work square as long as each half is at least that large */
+	if (!opt.tile) {
+		xdg_toplevel_set_min_size(W.top, opt.width, opt.height);
+		xdg_toplevel_set_max_size(W.top, opt.width, opt.height);
+	}
 	wl_surface_commit(W.surf);
 	while (!W.configured && wl_display_dispatch(W.d) != -1)
 		;
@@ -414,6 +444,7 @@ static struct {
 	VkSurfaceKHR surf;
 	VkFormat fmt;
 	VkRenderPass rp;
+	VkRenderPass rp_first, rp_mid, rp_last;  /* --jobs > 1: clear, load, load + present */
 	VkPipelineLayout layout;
 	VkPipeline pipe;
 	VkCommandPool pool;
@@ -427,7 +458,8 @@ static struct {
 	VkSemaphore rendered[MAX_IMAGES];  /* per image: safe reuse with FIFO */
 	bool stale;                        /* swapchain needs recreating */
 
-	VkCommandBuffer cb[MAX_INFLIGHT];
+	VkCommandBuffer cb[MAX_INFLIGHT][MAX_JOBS];
+	VkSemaphore chain[MAX_INFLIGHT][MAX_JOBS];  /* job j signals, job j + 1 waits */
 	VkSemaphore acquired[MAX_INFLIGHT];
 	VkFence fence[MAX_INFLIGHT];
 	ssize_t slot_frame[MAX_INFLIGHT];  /* record whose timestamps are in this slot, -1 */
@@ -571,6 +603,16 @@ static void vk_init(void)
 		.pDependencies = &dep,
 	};
 	VK(vkCreateRenderPass(V.dev, &rpci, NULL, &V.rp));
+	/* --jobs > 1: the jobs of a frame draw into the same swapchain image in turn. These
+	 * passes differ from V.rp only in load op and layouts, so they stay compatible with the
+	 * pipeline and the framebuffers (made with V.rp) */
+	att.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	VK(vkCreateRenderPass(V.dev, &rpci, NULL, &V.rp_first));
+	att.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+	att.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	VK(vkCreateRenderPass(V.dev, &rpci, NULL, &V.rp_mid));
+	att.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+	VK(vkCreateRenderPass(V.dev, &rpci, NULL, &V.rp_last));
 
 	VkPushConstantRange pcr = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, 2 * sizeof(uint32_t)};
 	VkPipelineLayoutCreateInfo plci = {
@@ -632,21 +674,23 @@ static void vk_init(void)
 	VK(vkCreateCommandPool(V.dev, &cpci, NULL, &V.pool));
 	VkCommandBufferAllocateInfo cbai = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, .commandPool = V.pool,
-		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = (uint32_t)opt.inflight,
+		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = (uint32_t)opt.jobs,
 	};
-	VK(vkAllocateCommandBuffers(V.dev, &cbai, V.cb));
 	VkSemaphoreCreateInfo semci = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
 	VkFenceCreateInfo fci = {
 		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .flags = VK_FENCE_CREATE_SIGNALED_BIT,
 	};
 	for (int i = 0; i < opt.inflight; i++) {
+		VK(vkAllocateCommandBuffers(V.dev, &cbai, V.cb[i]));
+		for (int j = 0; j + 1 < opt.jobs; j++)
+			VK(vkCreateSemaphore(V.dev, &semci, NULL, &V.chain[i][j]));
 		VK(vkCreateSemaphore(V.dev, &semci, NULL, &V.acquired[i]));
 		VK(vkCreateFence(V.dev, &fci, NULL, &V.fence[i]));
 		V.slot_frame[i] = -1;
 	}
 	VkQueryPoolCreateInfo qpci = {
 		.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, .queryType = VK_QUERY_TYPE_TIMESTAMP,
-		.queryCount = 2 * MAX_INFLIGHT + 1,
+		.queryCount = PROBE_QUERY + 1,
 	};
 	VK(vkCreateQueryPool(V.dev, &qpci, NULL, &V.qp));
 	cbai.commandBufferCount = 1;
@@ -753,7 +797,7 @@ static int64_t tick_to_mono(uint64_t tick)
 static void probe_offset(int n, int64_t *corr, int64_t *err, int64_t *lo_out, int64_t *hi_out)
 {
 	int64_t lo = INT64_MIN, hi = INT64_MAX;
-	uint32_t q = 2 * MAX_INFLIGHT;
+	uint32_t q = PROBE_QUERY;
 	int64_t saved = V.corr_ns;
 	V.corr_ns = 0;
 	calibrate_clocks();
@@ -856,11 +900,19 @@ static void collect(int slot)
 	ssize_t i = V.slot_frame[slot];
 	if (i < 0)
 		return;
-	uint64_t t[2];
-	VK(vkGetQueryPoolResults(V.dev, V.qp, 2 * (uint32_t)slot, 2, sizeof t, t, sizeof t[0],
+	uint64_t t[2 * MAX_JOBS];
+	uint32_t n = 2 * (uint32_t)opt.jobs;
+	VK(vkGetQueryPoolResults(V.dev, V.qp, QUERY(slot, 0), n, sizeof t, t, sizeof t[0],
 				 VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT));
-	frames[i].gpu_start = tick_to_mono(t[0]);
-	frames[i].gpu_end = tick_to_mono(t[1]);
+	struct frame *f = &frames[i];
+	f->gpu_start = tick_to_mono(t[0]);
+	f->gpu_end = tick_to_mono(t[n - 1]);
+	f->exec_sum = f->gpu_gaps = 0;
+	for (uint32_t j = 0; j < n; j += 2) {
+		f->exec_sum += tick_to_mono(t[j + 1]) - tick_to_mono(t[j]);
+		if (j)
+			f->gpu_gaps += tick_to_mono(t[j]) - tick_to_mono(t[j - 1]);
+	}
 	V.slot_frame[slot] = -1;
 }
 
@@ -898,44 +950,56 @@ static void render(size_t idx)
 	f->area_w = V.ext.width < (uint32_t)opt.work ? V.ext.width : (uint32_t)opt.work;
 	f->area_h = V.ext.height < (uint32_t)opt.work ? V.ext.height : (uint32_t)opt.work;
 
-	VkCommandBuffer cb = V.cb[slot];
+	/* Job j gets its share of the frame's iterations; jobs are submitted back to back with no
+	 * CPU wait, chained by semaphores (job j + 1 waits for job j), like a multi-pass client */
+	int k = opt.jobs;
+	f->jobs = k;
 	VkCommandBufferBeginInfo bi = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
 	};
-	VK(vkResetCommandBuffer(cb, 0));
-	VK(vkBeginCommandBuffer(cb, &bi));
-	vkCmdResetQueryPool(cb, V.qp, 2 * (uint32_t)slot, 2);
-	vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, V.qp, 2 * (uint32_t)slot);
 	VkClearValue clear = {.color = {{0.05f, 0.05f, 0.08f, 1.0f}}};
-	VkRenderPassBeginInfo rpbi = {
-		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO, .renderPass = V.rp,
-		.framebuffer = V.fb[img], .renderArea = {{0, 0}, V.ext}, .clearValueCount = 1,
-		.pClearValues = &clear,
-	};
-	vkCmdBeginRenderPass(cb, &rpbi, VK_SUBPASS_CONTENTS_INLINE);
-	vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, V.pipe);
 	VkViewport vp = {0, 0, (float)f->area_w, (float)f->area_h, 0, 1};
 	VkRect2D sc = {{0, 0}, {f->area_w, f->area_h}};
-	vkCmdSetViewport(cb, 0, 1, &vp);
-	vkCmdSetScissor(cb, 0, 1, &sc);
-	uint32_t pc[2] = {f->iters, (uint32_t)idx};
-	vkCmdPushConstants(cb, V.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, pc);
-	vkCmdDraw(cb, 3, 1, 0, 0);
-	vkCmdEndRenderPass(cb);
-	vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, V.qp, 2 * (uint32_t)slot + 1);
-	VK(vkEndCommandBuffer(cb));
+	for (int j = 0; j < k; j++) {
+		VkCommandBuffer cb = V.cb[slot][j];
+		VK(vkResetCommandBuffer(cb, 0));
+		VK(vkBeginCommandBuffer(cb, &bi));
+		vkCmdResetQueryPool(cb, V.qp, QUERY(slot, j), 2);
+		vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, V.qp, QUERY(slot, j));
+		VkRenderPassBeginInfo rpbi = {
+			.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+			.renderPass = k == 1 ? V.rp : j == 0 ? V.rp_first : j == k - 1 ? V.rp_last : V.rp_mid,
+			.framebuffer = V.fb[img], .renderArea = {{0, 0}, V.ext}, .clearValueCount = 1,
+			.pClearValues = &clear,
+		};
+		vkCmdBeginRenderPass(cb, &rpbi, VK_SUBPASS_CONTENTS_INLINE);
+		vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, V.pipe);
+		vkCmdSetViewport(cb, 0, 1, &vp);
+		vkCmdSetScissor(cb, 0, 1, &sc);
+		uint32_t share = (uint32_t)((uint64_t)f->iters * (uint64_t)(j + 1) / (uint64_t)k -
+					    (uint64_t)f->iters * (uint64_t)j / (uint64_t)k);
+		uint32_t pc[2] = {share, (uint32_t)idx};
+		vkCmdPushConstants(cb, V.layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, pc);
+		vkCmdDraw(cb, 3, 1, 0, 0);
+		vkCmdEndRenderPass(cb);
+		vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, V.qp, QUERY(slot, j) + 1);
+		VK(vkEndCommandBuffer(cb));
+	}
 
 	VkPipelineStageFlags wait = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-	VkSubmitInfo si = {
-		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .waitSemaphoreCount = 1,
-		.pWaitSemaphores = &V.acquired[slot], .pWaitDstStageMask = &wait,
-		.commandBufferCount = 1, .pCommandBuffers = &cb, .signalSemaphoreCount = 1,
-		.pSignalSemaphores = &V.rendered[img],
-	};
 	f->tid = gettid();
 	f->t_submit = now_ns();
-	VK(vkQueueSubmit(V.q, 1, &si, V.fence[slot]));
+	for (int j = 0; j < k; j++) {
+		VkSubmitInfo si = {
+			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .waitSemaphoreCount = 1,
+			.pWaitSemaphores = j ? &V.chain[slot][j - 1] : &V.acquired[slot],
+			.pWaitDstStageMask = &wait, .commandBufferCount = 1,
+			.pCommandBuffers = &V.cb[slot][j], .signalSemaphoreCount = 1,
+			.pSignalSemaphores = j == k - 1 ? &V.rendered[img] : &V.chain[slot][j],
+		};
+		VK(vkQueueSubmit(V.q, 1, &si, j == k - 1 ? V.fence[slot] : VK_NULL_HANDLE));
+	}
 	f->t_submit_ret = now_ns();
 	V.slot_frame[slot] = (ssize_t)idx;
 	V.n_submitted++;
@@ -1010,7 +1074,7 @@ static uint32_t calibrate_iters(void)
 		int64_t ex[40];
 		int m = 0;
 		for (size_t i = first + 10; i < n_frames; i++)
-			ex[m++] = frames[i].gpu_end - frames[i].gpu_start;
+			ex[m++] = frames[i].exec_sum;  /* = gpu_end - gpu_start with one job */
 		if (!m)
 			break;
 		qsort(ex, (size_t)m, sizeof ex[0], cmp_i64);
@@ -1042,7 +1106,9 @@ static void write_log(FILE *o, uint32_t iters, const char *corr_src, int64_t end
 	for (int i = 0; i < opt.n_idle; i++)
 		fprintf(o, "%s%d", i ? "," : "", opt.idle_ms[i]);
 	static const char *pm[] = {"immediate", "mailbox", "fifo"};
-	fprintf(o, " pace=%s present=%s\n", opt.pace_frame ? "frame" : "fifo", pm[opt.present]);
+	fprintf(o, " pace=%s present=%s jobs=%d tile=%d grid_ms=%d start_at=%lld offset_ns=%lld\n",
+		opt.pace_frame ? "frame" : "fifo", pm[opt.present], opt.jobs, opt.tile, opt.grid_ms,
+		(long long)opt.start_at, (long long)opt.offset_ns);
 	fprintf(o, "# clock=CLOCK_MONOTONIC ns_per_tick=%.4f tick_mask=0x%llx last_cal_dev_ns=%llu "
 		"ts_corr_ns=%lld+-%lld(%s) end_ts_corr_ns=%lld+-%lld\n", V.ns_per_tick,
 		(unsigned long long)V.tick_mask, (unsigned long long)V.cal_dev_ns,
@@ -1050,18 +1116,22 @@ static void write_log(FILE *o, uint32_t iters, const char *corr_src, int64_t end
 		(long long)end_err);
 	fprintf(o, "burst,frame,idle_ms,paced,iters,tid,image,ext_w,ext_h,area_w,area_h,"
 		"t_intended,t_start,t_acquired,t_submit,t_submit_ret,t_present,t_present_ret,"
-		"gpu_start,gpu_end,exec_us,presented,refresh_ns,msc,flags,state\n");
+		"gpu_start,gpu_end,exec_us,presented,refresh_ns,msc,flags,state,"
+		"jobs,exec_sum_us,gpu_gap_us\n");
 	static const char *state[] = {"pending", "presented", "discarded"};
 	for (size_t i = 0; i < n_frames; i++) {
 		struct frame *f = &frames[i];
+		/* exec_us is the GPU span (first job start .. last job end); with --jobs 1 it equals
+		 * exec_sum_us */
 		fprintf(o, "%d,%d,%d,%d,%u,%d,%u,%u,%u,%u,%u,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,"
-			"%.1f,%lld,%u,%llu,%u,%s\n", f->burst, f->frame, f->idle_ms, f->paced, f->iters, f->tid,
-			f->image, f->ext_w, f->ext_h, f->area_w, f->area_h, (long long)f->t_intended,
-			(long long)f->t_start, (long long)f->t_acquired, (long long)f->t_submit,
-			(long long)f->t_submit_ret, (long long)f->t_present, (long long)f->t_present_ret,
-			(long long)f->gpu_start, (long long)f->gpu_end,
+			"%.1f,%lld,%u,%llu,%u,%s,%d,%.1f,%.1f\n", f->burst, f->frame, f->idle_ms, f->paced,
+			f->iters, f->tid, f->image, f->ext_w, f->ext_h, f->area_w, f->area_h,
+			(long long)f->t_intended, (long long)f->t_start, (long long)f->t_acquired,
+			(long long)f->t_submit, (long long)f->t_submit_ret, (long long)f->t_present,
+			(long long)f->t_present_ret, (long long)f->gpu_start, (long long)f->gpu_end,
 			(f->gpu_end - f->gpu_start) / 1000.0, (long long)f->presented, f->refresh_ns,
-			(unsigned long long)f->msc, f->flags, state[f->state]);
+			(unsigned long long)f->msc, f->flags, state[f->state], f->jobs,
+			f->exec_sum / 1000.0, f->gpu_gaps / 1000.0);
 	}
 	if (o != stdout)
 		fclose(o);
@@ -1100,6 +1170,8 @@ int main(int argc, char **argv)
 	int order[MAX_IDLE];
 	for (int i = 0; i < opt.n_idle; i++)
 		order[i] = i;
+	int64_t origin = opt.start_at ? opt.start_at : now_ns(), last_end = now_ns();
+	int overruns = 0;
 	for (int b = 0; !stop && (opt.bursts == 0 || b < opt.bursts); b++) {
 		int k = b % opt.n_idle;
 		if (k == 0 && opt.shuffle)
@@ -1109,11 +1181,25 @@ int main(int argc, char **argv)
 				order[j] = t;
 			}
 		int idle = opt.idle_ms[order[k]];
-		wait_until(now_ns() + idle * 1000000LL);
+		if (opt.grid_ms) {
+			/* shared absolute schedule: two clients started with the same origin begin
+			 * their bursts together (or offset); idle_ms logs the actual gap */
+			int64_t at = origin + opt.offset_ns + (int64_t)b * opt.grid_ms * 1000000LL;
+			if (at < now_ns())
+				overruns++;
+			idle = (int)((at > last_end ? at - last_end : 0) / 1000000);
+			wait_until(at);
+		} else {
+			wait_until(now_ns() + idle * 1000000LL);
+		}
 		if (stop)
 			break;
 		run_burst(b, idle, iters, opt.frames);
+		last_end = now_ns();
 	}
+	if (overruns)
+		fprintf(stderr, "burst_client: warning: %d bursts started late (burst longer than "
+			"--grid-ms, or --start-at already passed)\n", overruns);
 
 	/* let the last presentation feedback arrive */
 	int64_t end_corr, end_err;

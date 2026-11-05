@@ -183,15 +183,29 @@ def frame_rows(rows, jobs, pid=None, align=False):
         if not js:
             out.append(o)
             continue
-        j = js[-1]  # the job that carries the frame's command buffer is the last one
+        # one job per frame: the job that carries the frame's command buffer is the last one
+        # (earlier ones would be driver jobs). burst_client --jobs K (`jobs` > 1) submits K
+        # jobs itself: the first starts the frame, the last ends it
+        last = js[-1]
+        j = js[0] if r.get("jobs", 1) > 1 else last
         describe(o, j, rings)
         gs, ge = r["gpu_start"] / 1e9, r["gpu_end"] / 1e9
         tol = TOL_US * 1e-6
         o.update(submit=(j.t_queue - r["t_submit"] / 1e9) * 1e3, wake=(gs - j.t_hw) * 1e3,
-                 tail=(j.t_done - ge) * 1e3,
-                 ok=int(j.t_run - tol <= gs <= j.t_done + tol and ge <= j.t_done + tol))
+                 tail=(last.t_done - ge) * 1e3,
+                 ok=int(j.t_run - tol <= gs <= j.t_done + tol and ge <= last.t_done + tol))
+        o.update(kernel_span(js))
         out.append(o)
     return out, shift
+
+
+def kernel_span(js):
+    """Kernel-side multi-job frame cost (ms): first queue -> last done, summed exec, and the
+    time between one job's end and the next one's HW start (other clients' work or idle)."""
+    js = sorted(js, key=lambda j: j.t_queue)
+    return dict(span_trace=(max(j.t_done for j in js) - js[0].t_queue) * 1e3,
+                exec_trace_sum=sum(j.t_done - j.t_hw for j in js) * 1e3,
+                between_trace=sum(max(0.0, b.t_hw - a.t_done) for a, b in zip(js, js[1:])) * 1e3)
 
 
 def frames_per_burst(run):
@@ -237,7 +251,8 @@ def trace_frame_rows(jobs, n_frames):
 
 COLS = ("burst", "frame", "idle_ms", "state", "n_jobs", "ctx", "seq", "ring", "prio",
         "start_lat", "submit", "dep", "order", "pick", "credit", "ring_wait", "wake",
-        "exec_gpu", "exec_trace", "tail", "ok", "busy_ms", "busy_by")
+        "exec_gpu", "exec_trace", "tail", "ok", "busy_ms", "busy_by",
+        "span_trace", "exec_trace_sum", "between_trace")
 
 
 def write(path, frames):

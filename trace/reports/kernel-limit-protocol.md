@@ -209,7 +209,40 @@ only the affected presentation attribution; retain independent GPU outcomes.
 ### Victim self-cost and two-client cells
 
 Alongside unchanged m3 controls, add explicit victim cells; these extensions are
-not already implemented by reusing the old harness:
+not already implemented by reusing the old harness.
+
+**Implemented 2026-11-04 (no hardware pilot yet).** `trace/pilot.py plan` adds these
+captures to every session in a seeded random order after the m3 matrix:
+
+| Cell | Command (under `capture.sh`) | Reps | Role |
+|---|---|---|---|
+| solo multi-job | `burst.sh none --iters 736 -n 10 -b 20 -i 300 --jobs 3` | 3 | secondary self-cost |
+| two-client 3-job aligned / offset | `two_victims.sh aligned\|offset --iters 736 -n 10 -b 20 --jobs 3` | 3 each | primary self-cost (criterion 2) |
+| two-client 1-job aligned / offset | same without `--jobs` | 1 each | secondary |
+| throughput-only flood | `flood.sh vkmark-cube 20` | 3 | primary throughput (criterion 3) with matrix `vk-hog` |
+
+- `burst_client --jobs K` splits the frame's iterations evenly over K back-to-back
+  `vkQueueSubmit`s (no CPU wait between them), chained by binary semaphores, all
+  drawing into the frame's swapchain image. Each job has its own GPU timestamps;
+  the log adds `jobs`, `exec_sum_us` and `gpu_gap_us`. On the stock kernel
+  (uncapped), 3 jobs used 1682 us summed exec vs 1669 us for 1 job (+0.8%), with
+  114 us of gaps. The per-frame kernel job count is checked from traces
+  (`selfcost.py` `jobs` column).
+- `two_victims.sh` runs two `burst_client` processes (separate DRM clients) tiled
+  side by side on an empty workspace (948x1167 each with eDP-1; work area 512x512),
+  with burst starts on a shared CLOCK_MONOTONIC grid (`--grid-ms 800 --start-at`),
+  client B offset by half the focused output's refresh. Only burst starts are
+  offset: later frames follow each client's frame callbacks from the same output.
+  Frames from before the tiles settle (first frames of burst 0) are dropped by
+  window size and counted.
+- `join.py` (per log, `--log burst-a.csv`) adds kernel-side `span_trace` (first job
+  queued -> last job done), `exec_trace_sum` and `between_trace`; `selfcost.py`
+  reports per-client run medians (the criterion-2 scalar is the run-median
+  `span_trace`), frame-0 wait, presented share, skipped vblanks and delivered fps.
+- `throughput.py` reports steady jobs/s per client (first 3 s and last 1 s
+  dropped); criterion 3 uses the hog's jobs/s. The old m3-p1r vkmark-cube run gives
+  19,273 jobs/s at 93% GPU busy, so the flood is GPU-limited, not refresh-limited;
+  re-check this on the test kernel in pilots.
 
 - One NORMAL interactive victim, no hog: both the original single-job-per-frame
   control and a multi-job-per-frame variant. Hold total GPU work/frame constant;

@@ -1,4 +1,4 @@
-# DRM GPU scheduling
+# BORE-inspired DRM GPU scheduling
 
 **Keep interactive frames moving when the GPU is busy.**
 

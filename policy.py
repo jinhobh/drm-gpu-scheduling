@@ -1,84 +1,263 @@
-"""Approximation of upstream's CFS-inspired "fair" drm_sched policy (Tvrtko Ursulin,
-"Fair(er) DRM scheduler", merged for 7.2 then reverted as default).
+"""Fair drm_sched policy with bounded sleeper credit (BORE/CFS-style interactivity).
 
-* One run queue for all priorities, ordered by virtual GPU time.
-* vruntime += gpu_time << shift[prio]; shifts KERNEL=1, HIGH=2, NORMAL=4, LOW=7
-  (each step down gets ~2x/4x/8x less GPU time).  Accounted when a job finishes.
-* An entity leaves the tree when its queue empties and remembers its lag relative to the
-  tree minimum; on re-entry it is placed at min_vruntime + lag.
-* "Favour interactive clients slightly": an entity re-joining with zero lag goes just in
-  front of the head if its average job is shorter than the scheduler average (EWMA),
-  just behind otherwise; a lower-priority one goes further back.
+* KERNEL and HIGH entities are strictly ahead; NORMAL/LOW share by virtual GPU time:
+  vruntime += cost << shift[prio]  (shifts KERNEL=1, HIGH=2, NORMAL=4, LOW=7), where
+  cost = gpu_time * (1 + gpu_time / LONG): a long non-preemptible job also costs
+  everyone else head-of-line latency, so it is charged a little extra.
+* min_vr is a monotonic clock (cfs_rq->min_vruntime): the smallest vruntime among
+  entities that have work queued or in flight.
+* An entity waking from idle is placed at max(vr, min_vr - CREDIT << shift): it keeps
+  up to CREDIT µs of GPU time it did not use while asleep (GENTLE_FAIR_SLEEPERS).
+  Short-burst clients therefore jump ahead of hogs for a whole frame, while a hog
+  that sleeps briefly between jobs only earns as much credit as it slept.
+* Within NORMAL/LOW, entities that are not hogs go before hogs; hogs cannot starve
+  thanks to the starvation guard below.  Hogs are ordered by vruntime.  Non-hogs go
+  first-frame-after-idle first (input response is graded by how late it is), then
+  earliest deadline first: the compositor latch after the later of the head frame's
+  ideal finish and now + its queued work, then least queued work.
+* HW queue depth: at most one NORMAL/LOW entity on the ring at a time (a non-hog may
+  queue its own next job behind its running one), and a hog only starts on an empty
+  ring, so an urgent frame never waits behind two non-preemptible jobs.
+* Hogs: BORE's burst time is CPU time between sleeps; the GPU analogue used here is
+  the GPU time of one frame (the jobs an entity pushes together, more than
+  FRAME_GAP after its previous push), i.e. how long the GPU works for each time the
+  client comes back from the CPU.  Unlike time since idle, it does not grow when
+  the scheduler starves a client and its frames pile up (a small ring of per-frame
+  job counts attributes completions to frames).  An entity is a hog if its oldest
+  unfinished or last finished frame exceeded
+  HOG_BURST, or it keeps more than HOG_QUEUE jobs queued, unless it still has more
+  than CREDIT_MIN of sleeper credit (it has used well under its fair share lately,
+  e.g. a freshly launched app) and its last idle period lasted at least SLEEP_MIN:
+  a hog that only lags because its jobs were deferred, or that sleeps briefly
+  between jobs, does not qualify.
+* Compositor protection: the HIGH (DRM master) entity's fence deadlines reveal the
+  vblank grid (period = smallest gap between deadlines), how long before vblank it
+  submits, and its cost; its next frame is due by the next vblank, or before its
+  next wake-up if it is too heavy to make the vblank.  It skips a vblank while its
+  previous frame is still pending, so the prediction rolls forward on the grid for
+  up to ROLL vblanks after its last frame.
+* Interactive frames: an entity that is not a hog starts a frame every k vblanks
+  during a burst (k from its last frame interval), so its next frame is predicted k
+  periods after the current one started (EWMA frame cost), and must finish before
+  the compositor latches it (vblank grid minus the compositor's lead).
+* Holds: one backward pass over the predicted urgent frames (arrival order) gives
+  the latest time the ring may become free with all of them still on time.  A hog
+  job that would run past it (cost = EWMA of its job times plus K_DEV mean absolute
+  deviations: overrunning an urgent frame costs more than a slightly longer hold) is
+  held back if the first urgent frame is due within HOLD_MAX (or a quarter of the
+  job's length, for long jobs).  If it is due later, a conflicting hog job shorter
+  than a vblank period is only deferred: any other ready job goes first (no
+  idling).  Longer jobs can never fit between compositor frames and keep their fair
+  turn, unless a client's animation is running: then they are deferred too and
+  catch up (lowest vruntime) after it.  Nothing is held when the urgent frames
+  cannot make it anyway.
+* Starvation guard: a NORMAL/LOW head job ready for longer than AGE_US goes first
+  among NORMAL/LOW and is exempt from holds, deferral and the empty-ring rule.
+* Work conservation: holds draw on an idle budget that refills at IDLE_FRAC of wall
+  time (banked up to IDLE_CAP), so holding is bounded whatever the workload.
+
+Kernel mapping: vr/min_vr are drm_sched_entity / drm_sched_rq fields; idle detection
+is the entity queue becoming empty with no job in flight; gpu_time comes from the
+scheduled/finished fence timestamps; the vblank grid comes from the deadlines the
+compositor's atomic commits set on its fences (dma_fence_set_deadline).  Per-entity
+state is a handful of counters and EWMAs; each decision is O(#entities) plus a sort
+of the (one per animating entity) predicted frames; all arithmetic maps to integers.
 """
 
-from gpusim.api import PolicyBase
+from gpusim.api import PRIO_HIGH, PRIO_NORMAL, PolicyBase
 
 SHIFT = (1, 2, 4, 7)
+CREDIT = 100000       # µs of unused GPU time an idle entity may bank
+LONG = 50000          # a job of length L is charged L * (1 + L / LONG) of vruntime
+HOLD_MAX = 2000       # longest the ring may idle waiting for an urgent arrival (µs)
+HOG_BURST = 5000      # GPU time per frame beyond which an entity is a hog (µs)
+HOG_QUEUE = 4         # ... or more jobs than this queued
+CREDIT_MIN = 10000    # ... unless it still has this much sleeper credit left (µs)
+SLEEP_MIN = 2000      # ... and really slept (idle this long) before its current burst
+AGE_US = (0, 0, 150000, 600000)   # a head job ready this long goes first (no starvation)
+MARGIN = 300          # latch pad + doorbell + context switch (µs)
+FRAME_GAP = 500       # pushes further apart than this start a new frame (µs)
+FQ_LEN = 8            # unfinished frames tracked per entity
+K_DEV = 0.5           # hog job estimate = avg + K_DEV * mean absolute deviation
+JITTER = 800          # a predicted frame may arrive this late (µs)
+ROLL = 3              # keep predicting compositor frames this many vblanks after the last
+IDLE_FRAC = 0.10      # holds may idle the ring at most this fraction of the time
+IDLE_CAP = 250000     # ... banked up to this much, so bursts can use idle saved earlier (µs)
 
 
 def ewma(avg, x):
-    # DECLARE_EWMA(drm_sched_avgtime, 6, 4): weight 1/16
-    return x if avg == 0 else avg + (x - avg) / 16.0
+    return x if avg == 0 else avg + (x - avg) / 8.0
 
 
 class Policy(PolicyBase):
     def __init__(self, sched):
         super().__init__(sched)
-        self.sched_avg = 0.0
+        self.min_vr = 0
+        self.vblank = None      # last compositor deadline seen
+        self.period = None
+        self.comp_lead = 0.0    # compositor submits this long before its deadline
+        self.comp_cost = 0.0
+        self.budget = 0.0       # hold budget (µs of idle ring time)
+        self.last_t = 0
+        self.holding = False
 
     def entity_init(self, e):
-        e.ps.vr = 0.0
-        e.ps.lag = 0.0
-        e.ps.in_tree = False
+        e.ps.vr = self.min_vr
         e.ps.avg = 0.0
-
-    def _tree(self, skip=None):
-        return [e for e in self.sched.entities if e.ps.in_tree and e is not skip]
-
-    def _min_vr(self, skip=None):
-        t = self._tree(skip)
-        return min(e.ps.vr for e in t) if t else None
+        e.ps.dev = 0.0          # EWMA of |job time - avg|
+        e.ps.last_push = None
+        e.ps.frame_t = None     # when the entity's current frame started
+        e.ps.fq = []            # jobs per submitted, unfinished frame (ring of <= FQ_LEN)
+        e.ps.fsum = 0           # GPU time of the oldest unfinished frame so far
+        e.ps.last_f = 0         # GPU time of the last finished frame
+        e.ps.fcost = 0.0        # EWMA of GPU time per frame
+        e.ps.fk = 1             # frame interval in vblank periods
+        e.ps.slept = True       # its last idle period was at least SLEEP_MIN
+        e.ps.first = False      # its current frame is the first after a long idle
 
     def job_push(self, e, j):
-        if e.ps.in_tree:
-            return
-        head = None
-        for x in self._tree():
-            if head is None or (x.ps.vr, x.id) < (head.ps.vr, head.id):
-                head = x
-        if head is None:
-            e.ps.vr = max(e.ps.vr, 0.0)
-        elif e.ps.lag > 0:
-            e.ps.vr = head.ps.vr + e.ps.lag
-        elif e.priority > head.priority:
-            e.ps.vr = head.ps.vr + ((1 + e.ps.avg + self.sched_avg) * (1 << SHIFT[e.priority]))
-        elif e.priority < head.priority:
-            e.ps.vr = head.ps.vr - (head.priority - e.priority) * 1e-3
-        else:
-            e.ps.vr = head.ps.vr + (-1e-3 if e.ps.avg <= self.sched_avg else 1e-3)
-        e.ps.lag = 0.0
-        e.ps.in_tree = True
+        now = self.sched.now
+        if e.idle_since_us is not None:
+            e.ps.vr = max(e.ps.vr, self.min_vr - (CREDIT << SHIFT[e.priority]))
+            e.ps.slept = now - e.idle_since_us >= SLEEP_MIN
+            e.ps.first = self.period is not None and now - e.idle_since_us > 2 * self.period
+        elif e.ps.last_push is not None and now - e.ps.last_push > FRAME_GAP:
+            e.ps.first = False
+        if e.ps.last_push is None or now - e.ps.last_push > FRAME_GAP:
+            if e.ps.frame_t is not None and self.period:
+                k = round((now - e.ps.frame_t) / self.period)
+                if k <= 4:
+                    e.ps.fk = max(1, k)
+            e.ps.frame_t = now
+            if len(e.ps.fq) < FQ_LEN:
+                e.ps.fq.append(0)
+        e.ps.fq[-1] += 1
+        e.ps.last_push = now
 
-    def job_run(self, e, j):
-        if not e.queue:
-            m = self._min_vr(skip=e)
-            e.ps.lag = max(0.0, e.ps.vr - m) if m is not None else 0.0
-            e.ps.in_tree = False
+    def fence_deadline(self, e, j, t):
+        if e.priority != PRIO_HIGH:
+            return
+        if self.vblank is not None and t > self.vblank:
+            d = t - self.vblank
+            self.period = d if self.period is None else min(self.period, d)
+        if self.vblank is None or t > self.vblank:
+            self.vblank = t
+            self.comp_lead = ewma(self.comp_lead, t - self.sched.now)
 
     def job_done(self, e, j):
-        dv = j.gpu_us * (1 << SHIFT[e.priority])
-        if e.ps.in_tree:
-            e.ps.vr += dv
-        else:
-            e.ps.lag += dv
-            e.ps.vr += dv
+        e.ps.vr += (j.gpu_us + j.gpu_us * j.gpu_us // LONG) << SHIFT[e.priority]
+        e.ps.dev = ewma(e.ps.dev, abs(j.gpu_us - e.ps.avg)) if e.ps.avg else 0.0
         e.ps.avg = ewma(e.ps.avg, j.gpu_us)
-        self.sched_avg = ewma(self.sched_avg, j.gpu_us)
+        e.ps.fsum += j.gpu_us
+        e.ps.fq[0] -= 1
+        if not e.ps.fq[0]:              # the oldest frame just finished
+            e.ps.fq.pop(0)
+            e.ps.last_f = e.ps.fsum
+            e.ps.fcost = ewma(e.ps.fcost, e.ps.fsum)
+            e.ps.fsum = 0
+        if e.priority == PRIO_HIGH and j.deadline_us is not None:
+            self.comp_cost = ewma(self.comp_cost, j.gpu_us)
+
+    def _is_hog(self, e):
+        if e.ps.slept and self.min_vr - e.ps.vr > CREDIT_MIN << SHIFT[e.priority]:
+            return False
+        return max(e.ps.fsum, e.ps.last_f) > HOG_BURST or len(e.queue) > HOG_QUEUE
+
+    def _urgent(self, now):
+        """(arrival, cost, deadline, is_client) of frames predicted to arrive soon, by
+        arrival: the compositor's next frame, and the next frame of each interactive
+        entity in a burst (every fk vblanks), due when the compositor latches it."""
+        out = []
+        p = self.period
+        if p is None:
+            return out
+        # its frames are skipped while the previous one is pending: roll forward on the grid
+        k = max(1, (now + self.comp_lead - self.vblank) // p + 1)
+        if k <= ROLL:
+            v = self.vblank + k * p
+            a = v - self.comp_lead
+            c = self.comp_cost + MARGIN
+            if a + c > v:
+                v += p - self.comp_lead     # can't make this vblank: due before next wake
+            out.append((a, c, v, False))
+        for e in self.sched.entities:
+            if e.priority < PRIO_NORMAL or e.queue or e.ps.frame_t is None or self._is_hog(e):
+                continue
+            a = e.ps.frame_t + e.ps.fk * p
+            if a < now - JITTER:
+                continue
+            a = max(a, now)
+            out.append((a, e.ps.fcost + MARGIN, self._latch(a + e.ps.fcost), True))
+        out.sort()
+        return out
+
+    def _latch(self, t):
+        """First time at or after t the compositor latches client buffers."""
+        p = self.period
+        base = self.vblank - self.comp_lead - MARGIN
+        return base + -(-(t - base) // p) * p
+
+    @staticmethod
+    def _latest_free(urgent):
+        """Latest time the ring may become free with all urgent frames (run in arrival
+        order) still meeting their deadlines, or None if they cannot all make it anyway.
+        One backward pass: each frame must start by min(own deadline, next frame's
+        latest start) - own cost, and cannot start before it arrives."""
+        t = None
+        for a, c, d, _ in reversed(urgent):
+            t = (d if t is None else min(d, t)) - c
+            if a > t:
+                return None
+        return t
 
     def select(self):
+        s = self.sched
+        now = s.now
+        active = [e for e in s.entities if e.queue or e.inflight]
+        if active:
+            self.min_vr = max(self.min_vr, min(e.ps.vr for e in active))
+        normal_busy = None      # id of the NORMAL/LOW entity with a job on the ring
+        for j in s.hw_jobs:
+            o = s.lookup(j.ring, j.entity_id)
+            if o is not None and o.priority >= PRIO_NORMAL:
+                normal_busy = o.id
+        dt = now - self.last_t
+        self.last_t = now
+        self.budget = min(IDLE_CAP, self.budget + dt * IDLE_FRAC - (dt if self.holding else 0))
+        urgent = self._urgent(now) if s.name == "gfx" else ()
+        free_by = self._latest_free(urgent) if urgent else None
         best = None
-        for e in self.sched.entities:
-            if e.ready and e.ps.in_tree:
-                if best is None or (e.ps.vr, e.id) < (best.ps.vr, best.id):
-                    best = e
+        best_key = None
+        held = None
+        for e in active:
+            if not e.ready:
+                continue
+            aged = now - e.head.ready_us > AGE_US[e.priority]
+            defer = hog = False
+            if e.priority >= PRIO_NORMAL:
+                hog = self._is_hog(e)
+                if normal_busy is not None and (hog or normal_busy != e.id):
+                    continue
+                if not aged and hog:
+                    if s.credits_used:
+                        continue
+                    est = e.ps.avg + K_DEV * e.ps.dev
+                    if free_by is not None and now <= free_by < now + est:
+                        if self.budget > 0 and urgent[0][0] - now <= max(HOLD_MAX, e.ps.avg / 4):
+                            held = urgent[0][0]
+                            continue
+                        defer = e.ps.avg < self.period or any(u[3] for u in urgent)
+            dl = work = 0
+            if not hog and e.priority >= PRIO_NORMAL and self.period:
+                work = len(e.queue) * e.ps.avg
+                dl = self._latch(max(e.head.submit_us + e.ps.fcost, now + work))
+            key = (min(e.priority, PRIO_NORMAL), not aged, hog, defer, not e.ps.first, dl, work,
+                   e.ps.vr, e.id)
+            if best_key is None or key < best_key:
+                best, best_key = e, key
+        if best is not None and best_key[3] and held is not None:
+            best = None
+        self.holding = best is None and held is not None
+        if self.holding:
+            s.request_wakeup(max(held, now + 100))
         return best

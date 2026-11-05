@@ -121,9 +121,16 @@ needs service-based ordering. It is not a new general mechanism.
    - **Throughput-only tiny-job flood**, not limited by presentation.
    - **Hog throughput (fps/jobs per second) in every summary.**
    - Add these cells to `trace/pilot.py plan` (it currently runs only m3 cells).
-2. **Decide the primary GPU-benefit measure (the user's call).** The recommendation
-   is kernel-side wait until GPU start (`trace/start_wait.py`), because the victim's
-   own GPU-timestamp correction can be loose under load (it was ±2.4 ms in one run).
+2. **Primary GPU-benefit measure: decided (2026-11-04).**
+   - Primary: kernel-side wait until GPU start, for burst frame 0:
+     `python3 trace/start_wait.py --frame0 RUN...`, after `parse.py` and `join.py`.
+   - Cross-check: `join.py`'s aligned app-measured start latency, printed alongside.
+     It agreed within 0.13 ms on 16 existing runs.
+   - Presentation latency stays secondary.
+   - **Still open until the pilot: frame 0 vs later frames.** Under fair, frame 0
+     already benefits without the cap (6.8–16.1 ms uncapped vs 2.2–7.0 capped),
+     while frames 1+ separate sharply (12.1–13.3 vs 4.7–4.9 ms). Any switch must
+     be made and disclosed before freezing (protocol, primary criterion 1).
 3. **Fair pilot: 3 boot pairs, 6 boots (the user runs it, as root).**
    - Generate the order with
      `python3 /home/jinho/Projects/drm-gpu-scheduling/trace/pilot.py plan --seed N --out PATH`
@@ -256,8 +263,8 @@ policy modelling.
 | `workloads/hog.sh` | background loads: `vk-hog` (8 ms jobs), `vk-hog1` (1 in flight), `gl-hog` (off-screen 8.5 ms), `vkmark-cube` (tiny-job flood), `glmark2-*`, `stk`, `mpv`, `none` |
 | `burst_client/` | ground-truth Vulkan + Wayland burst source with per-frame CSV (submit, GPU start/end, presented); `burst_client --help` |
 | `parse.py` | `python3 trace/parse.py RUN`: per-job breakdown to `RUN/jobs.csv` (`credit_wait` assumes credit limit 2 and does not know the bg1 cap) |
-| `join.py` | `python3 trace/join.py RUN...`: burst.csv × trace → `RUN/frames.csv` with submit/dep/order/pick/credit/ring/wake split |
-| `start_wait.py` | `python3 trace/start_wait.py RUN... [--ahead]`: victim/Hyprland kernel wait until GPU start (no GPU timestamp correction); `--ahead` counts hog jobs dispatched ahead of each ready victim job |
+| `join.py` | `python3 trace/join.py RUN...`: burst.csv × trace → `RUN/frames.csv` with submit/dep/order/pick/credit/ring/wake split (assumes credit limit 2: under the bg1 cap, cap-blocked time is labelled `pick`) |
+| `start_wait.py` | `python3 trace/start_wait.py RUN... [--ahead \| --frame0]`: victim/Hyprland kernel wait until GPU start (no GPU timestamp correction); `--ahead` counts hog jobs dispatched ahead of each ready victim job; `--frame0` prints the **primary measure** (frame-0 kernel wait per run) with the aligned app-measured cross-check and frames 1+ |
 | `admission.py` | `python3 trace/admission.py RUN...`: validates bg1 cap invariants (occupancy, serials, priority exemption, trace loss) and reports selection cost |
 | `burst_stats.py`, `compare.py` | per-frame-index latencies of one run; cross-matrix comparison after `join.py` |
 | `pilot.py`, `paired.py` | `pilot.py plan --seed N --out PATH [--pair fair\|fifo]` prepares a 6-boot pilot (never executes); `pilot.py pacing`; `paired.py` paired-block t intervals, sign-flip check and precision planning |
@@ -272,8 +279,9 @@ policy modelling.
   or two interactive apps, now share one slot.
 - **Fair's tiny-job-flood starvation** (finding 3) may persist or change under
   the cap.
-- **Victim GPU-timestamp correction** can be loose under load. Prefer kernel-side
-  measures, or re-probe on an idle GPU.
+- **Victim GPU-timestamp correction** can be loose under load, which is why the
+  primary measure is kernel-side. A run whose kernel and aligned app frame-0
+  medians differ by > 0.5 ms needs investigation.
 - **Session confounds:** boot age and a second display (DP-1) changed Hyprland's
   cost in m3-p1r, and pacing mode varies by session. Use eDP-1 only, record pacing
   probes, and counterbalance boot order.

@@ -161,7 +161,8 @@ prerequisites; no command here installs or boots a kernel automatically.
 
 The pilot must establish these before registration:
 
-1. **Mechanism:** capped heavy-hog GPU-start latency approaches cap-off,
+1. **Mechanism:** capped heavy-hog kernel-side wait until GPU start (the primary
+   measure below) approaches cap-off,
    same-policy `vk-hog1` (proposed engineering tolerance: absolute difference of
    run-median averages <= 1 ms); inspect traced credit/ring/pick decomposition and
    reservation invariants. Report pilot intervals; this tolerance is a feasibility
@@ -241,12 +242,29 @@ is the independent paired boot block. Average the prespecified run summaries
 within each session/cell first. A good p50 across clients cannot hide one losing
 service, but secondary per-cell CIs are not dozens of extra mandatory gates.
 
-1. **GPU scheduling benefit:** block difference of first-frame GPU-start latency
-   (uncapped heavy `vk-hog` minus capped heavy `vk-hog`, using averages of run
-   medians), in ms. Require the paired two-sided 95% t interval's lower endpoint
-   > 0. Report first-submit-to-last-completion span, summed exec and inter-job gaps
-   alongside it to attribute the gain. Mechanism matching to the uncapped
-   `vk-hog1` reference is the pilot prerequisite above.
+1. **GPU scheduling benefit:** block difference of first-frame **kernel-side wait
+   until GPU start** (uncapped heavy `vk-hog` minus capped heavy `vk-hog`, using
+   averages of run medians), in ms. Require the paired two-sided 95% t interval's
+   lower endpoint > 0. Report first-submit-to-last-completion span, summed exec and
+   inter-job gaps alongside it to attribute the gain. Mechanism matching to the
+   uncapped `vk-hog1` reference is the pilot prerequisite above.
+   - **Measure (decided 2026-11-04, before any pilot):** per frame-0 job, `sched_wait
+     + ring_wait` from `parse.py` (ready -> inferred hardware start), matched to
+     burst frames by finished fence via `join.py`; per-run scalar = median over the
+     run's frame 0s: `python3 trace/start_wait.py --frame0 RUN...`. It needs no
+     CPU/GPU timestamp correction (one first-boot run's correction was +-2.4 ms
+     loose) and is identical for capped and uncapped arms. It omits the
+     submit-to-queue step (~0.03 ms) and GFXOFF wake.
+   - **Cross-check (reported, not a gate):** `join.py`'s fence-aligned app-measured
+     frame-0 `start_lat`, printed by the same command. On 16 existing runs (m3 and
+     first boots) the two run medians agreed within 0.13 ms. A disagreement over
+     0.5 ms in a run is a trace-validity issue to investigate, not an outcome.
+   - **Frame scope remains open until the pilot.** Under fair, uncapped frame 0
+     already benefits from sleeper placement. Existing run medians: frame 0
+     6.8–16.1 ms uncapped (m3-p2) vs 2.2–7.0 ms capped (one boot), frames 1+
+     12.1–13.3 vs 4.7–4.9 ms. Choosing frames 1+ (or all burst frames) would be a
+     pilot-informed change made, and disclosed, **before** freezing. These are
+     non-paired historical/pilot runs, not confirmatory data.
 2. **Interactive GPU self-cost:** use the prespecified two-client, three-job/frame,
    no-hog aligned and half-refresh-offset cells. In each block, take the maximum
    of the four per-client/cell log ratios of run-median GPU spans (capped/uncapped).

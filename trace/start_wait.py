@@ -11,6 +11,11 @@ burst_client gfx client with the longest median exec; the victim is the next one
 
 --ahead counts, for each victim job, hog jobs dispatched while the victim was ready but
 not yet dispatched, and how many of those were queued before the victim.
+
+--frame0 prints the protocol's primary GPU-benefit scalar per run: the median over burst
+frame 0s of the kernel-side wait (frames from join.py's RUN/frames.csv, matched to
+jobs.csv by finished fence ctx:seq), next to join.py's aligned app-measured start_lat
+median for the same frames as the cross-check.
 """
 import argparse
 import collections
@@ -23,8 +28,13 @@ def q(xs, p):
     return xs[min(len(xs) - 1, int(p * len(xs)))]
 
 
+def read(path):
+    with open(path, newline="") as stream:
+        return list(csv.DictReader(stream))
+
+
 def load(run):
-    rows = [r for r in csv.DictReader(open(f"{run}/jobs.csv")) if r["ring"] == "gfx_0.0.0"]
+    rows = [r for r in read(f"{run}/jobs.csv") if r["ring"] == "gfx_0.0.0"]
     by = collections.defaultdict(list)
     for r in rows:
         by[(r["comm"], r["client"], r["prio"])].append(r)
@@ -58,11 +68,44 @@ def ahead(hog, victim):
     return dict(sorted(total.items())), dict(sorted(older.items()))
 
 
+def frame0(run):
+    """Kernel-side and aligned app-measured waits of every burst's frame 0."""
+    jobs = {(r["ctx"], r["seq"]): r for r in read(f"{run}/jobs.csv")}
+    kernel, app, later, multi, missing = [], [], [], 0, 0
+    for f in read(f"{run}/frames.csv"):
+        if f["ok"] != "1":
+            continue
+        job = jobs.get((f["ctx"], f["seq"]))
+        if job is None:
+            missing += 1
+            continue
+        if f["frame"] != "0":
+            later.append(wait(job))
+            continue
+        multi += f["n_jobs"] != "1"
+        kernel.append(wait(job))
+        app.append(float(f["start_lat"]))
+    if not kernel:
+        raise ValueError(f"{run}: no matched frame-0 jobs (run join.py first)")
+    return kernel, app, later, multi, missing
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("runs", nargs="+")
     ap.add_argument("--ahead", action="store_true")
+    ap.add_argument("--frame0", action="store_true")
     args = ap.parse_args()
+    if args.frame0:
+        print("run n kernel_f0_p50 kernel_f0_p99 app_f0_p50 app_f0_p99 kernel_f1+_p50 "
+              "multi_job_frames missing (ms)")
+        for run in args.runs:
+            run = run.rstrip("/")
+            k, a, later, multi, missing = frame0(run)
+            f1 = f"{statistics.median(later):.2f}" if later else "nan"
+            print(f"{run} {len(k)} {statistics.median(k):.2f} {q(k, .99):.2f} "
+                  f"{statistics.median(a):.2f} {q(a, .99):.2f} {f1} {multi} {missing}")
+        return
     print("run victim_p50 victim_p99 hypr_p50 hypr_p99 hog_exec_p50 victim_jobs (ms)")
     for run in args.runs:
         run = run.rstrip("/")

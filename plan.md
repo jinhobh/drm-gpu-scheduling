@@ -192,7 +192,9 @@ Update the **Status** and **Next** sections whenever a step finishes.
   submit time) **but protects HIGH Hyprland** (3.7 vs ~10–13 ms). **Fair + cap
   reproduces the cooperating-hog benefit** (victim 5.3 ms vs m3 vk-hog1 6.2–6.5 and
   vk-hog 12–15; 297/300 victim jobs had no hog job ahead). Skip-cap skipped 2,436
-  times. Pilot evidence only: no soak/suspend/recovery, throughput or self-cost yet.
+  times. Same boot, ~80 min use + 1 of 3 suspend/resumes: no GPU errors, cap count
+  back to zero, two repeats gave victim 6.0–6.2 ms (frame-0 start p50 2.5/7.0 ms).
+  Pilot evidence only: 2 suspends, recovery, throughput and self-cost still pending.
   The FIFO off/bg1 primary contrast cannot show the NORMAL-victim benefit; the
   protocol's primary contrast moves to fair off vs fair bg1/skip-cap.
 - Phase 3: prototype built, installed and first-booted; phase 2 fitting and phase 4
@@ -341,9 +343,9 @@ Root steps are for the user; give commands with absolute paths.
 
 2. **Kernel pilot before fixing the block count; primary contrast is now fair.**
    The kernel is built/installed and first-booted
-   ([pilot report](trace/reports/kernel-cap-first-boots.md)). Next: soak
-   `fair/bg1/skip-cap` (30 min mixed use, three suspend/resume cycles, then logs),
-   then a recovery check. Then pilot **fair/off vs fair/bg1/skip-cap** pairs
+   ([pilot report](trace/reports/kernel-cap-first-boots.md)). The
+   `fair/bg1/skip-cap` soak is done except two more suspend/resume cycles; then a
+   recovery check. Then pilot **fair/off vs fair/bg1/skip-cap** pairs
    (FIFO off/bg1 remains a secondary compositor-protection contrast). Follow the
    [protocol](trace/reports/kernel-limit-protocol.md) and
    [arm registry](trace/kernel/arms.csv); `trace/pilot.py plan` still generates

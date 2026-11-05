@@ -80,6 +80,27 @@ Skip-cap selection stepped past a cap-blocked head **2,436 times** in this run.
 In `fair/bg1/stock` each of those would leave the ready HIGH entity behind it
 waiting, which is why that arm is a diagnostic and was not booted first.
 
+## Soak and same-boot repeats (fair/bg1/skip-cap)
+
+Same boot as the valid fair run, ~80 minutes of normal desktop use. **One**
+suspend/resume completed (s2idle, 77 s, SMU resumed successfully); the protocol
+requires three, so two remain. No amdgpu timeout/reset/fault or scheduler warning
+during the boot; the only kernel WARNING is the stock power-supply one. Afterwards
+the short test ran twice (the second by accident; both kept):
+
+| Run | admission.py | Victim wait p50 / p99 | Hyprland p50 / p99 | Hog jobs ahead of victim |
+|---|---|---|---|---|
+| `20261104-214921` (before soak) | OK, 2,436 skips | 5.31 / 8.66 | 3.35 / 8.09 | 0 in 297/300 |
+| `20261104-230934` (after suspend) | OK, 2,302 skips | 6.21 / 8.80 | 3.37 / 8.37 | 0 in 300/300 |
+| `20261104-231013` (after suspend) | OK, 2,315 skips | 6.03 / 8.60 | 3.77 / 8.09 | 0 in 300/300 |
+
+The cap's count returned to zero in every capture after the soak and suspend
+(initial = final = 0); selection cost rose to at most 10.6 us. Both repeat runs had
+tight victim timestamp corrections (+-22–24 us), so `burst_stats.py` is usable:
+frame-0 GPU start p50 6.99 and 2.48 ms (p99 9.39, 8.34), within the m3 `vk-hog1`
+range (3.1–7.0 ms p50) and below the m3 uncapped `vk-hog` range (8.7–14.4 ms).
+Repeats on one boot are not independent blocks.
+
 ## Limits
 
 One run per arm, one boot each, fresh boots, no same-boot uncapped control

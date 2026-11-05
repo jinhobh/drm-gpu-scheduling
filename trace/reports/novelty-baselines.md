@@ -193,7 +193,7 @@ hogs, a short-job mimic, video and CPU-only contention. Include no-hog solo
 multi-job victims and two independent NORMAL interactive clients with aligned
 and offset bursts; report per-client execution, inter-job span, frame latency and
 missed refreshes against matched uncapped cells. Only the current protocol's named
-primary criteria determine the initial FIFO decision; other cell CIs are secondary. Report first-frame
+primary criteria determine the primary fair off vs bg1/skip-cap decision (revised from FIFO after the [first boots](kernel-cap-first-boots.md)); other cell CIs are secondary. Report first-frame
 presentation, missed refreshes, GPU wait, throughput, fairness, maximum wait
 and overhead with run-level uncertainty. Compare at matched throughput cost.
 A kernel change has not succeeded on presentation merely because GPU wait fell.

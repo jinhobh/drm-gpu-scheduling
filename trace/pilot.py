@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""Prepare (never execute) a six-boot FIFO precision pilot, outside confirmation.
+"""Prepare (never execute) a six-boot off/cap precision pilot, outside confirmation.
 
+The default pair is fair off vs fair bg1/skip-cap: the first boots showed FIFO + cap
+cannot help a NORMAL victim (trace/reports/kernel-cap-first-boots.md). `--pair fifo`
+keeps the secondary FIFO compositor-protection pair.
 Also classify a CSV produced by pacing.py --csv FILE with the `pacing` subcommand.
 """
 import argparse
@@ -17,7 +20,11 @@ arms = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(arms)
 
 
-def plan(seed, blocks=3):
+PAIRS = {'fair': ['fair/off/stock', 'fair/bg1/skip-cap'],
+         'fifo': ['fifo/off/stock', 'fifo/bg1/stock']}
+
+
+def plan(seed, blocks=3, pair='fair'):
     if blocks < 2:
         raise ValueError('at least two pilot blocks required')
     rng = random.Random(seed)
@@ -25,12 +32,12 @@ def plan(seed, blocks=3):
     rng.shuffle(orders)
     rows = []
     for block, reverse in enumerate(orders, 1):
-        names = ['fifo/off/stock', 'fifo/bg1/stock']
+        names = list(PAIRS[pair])
         if reverse:
             names.reverse()
         for session, arm in enumerate(names, 1):
             mode = arms.load()[arm]['admission']
-            name = f'fifo-pilot-b{block:02d}-a{mode}'
+            name = f'{pair}-pilot-b{block:02d}-a{mode}'
             capture = shlex.quote(str(REPO / 'trace/capture.sh'))
             burst = shlex.quote(str(REPO / 'trace/workloads/burst.sh'))
             probe = '--iters 736 -n 10 -i 300 -b 4'
@@ -66,13 +73,14 @@ def main():
     p = subs.add_parser('plan')
     p.add_argument('--seed', type=int, required=True)
     p.add_argument('--blocks', type=int, default=3)
+    p.add_argument('--pair', choices=PAIRS, default='fair')
     p.add_argument('--out', type=Path, required=True)
     p = subs.add_parser('pacing')
     p.add_argument('csv', type=Path)
     p.add_argument('--refresh-ms', type=float, required=True)
     args = parser.parse_args()
     if args.command == 'plan':
-        rows = plan(args.seed, args.blocks)
+        rows = plan(args.seed, args.blocks, args.pair)
         args.out.parent.mkdir(parents=True, exist_ok=True)
         with args.out.open('x', newline='') as stream:
             writer = csv.DictWriter(stream, fieldnames=list(rows[0]))

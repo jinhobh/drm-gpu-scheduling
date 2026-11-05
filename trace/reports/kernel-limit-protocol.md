@@ -121,10 +121,14 @@ and default boot entry stay untouched.
 The earlier six-block/30-session proposal and the many per-cell CI gates are
 withdrawn. Choose the confirmatory block count from between-boot pilot variation,
 then fix it **before** any confirmatory data. Pilot/soak runs never enter that data.
-The initial primary contrast is FIFO cap-off versus FIFO bg1. Fair's cap and
-selection contrasts, and global1, are secondary/diagnostic until a separate
-confirmatory question is justified. Do not multiply three primary claims across
-all arms, clients, cells and metrics.
+**Revised 2026-11-04 after the first boots, before any pilot or confirmatory
+data** ([first-boot report](kernel-cap-first-boots.md)): the primary contrast is
+**fair/off/stock versus fair/bg1/skip-cap**. Under FIFO the cap cannot give a
+NORMAL victim the GPU-start benefit: the hog's next job is already queued and
+older, and FIFO serves it first (697/700 victim jobs). FIFO cap-off versus bg1
+remains a secondary contrast for HIGH compositor protection; fair/bg1/stock
+(cap only) and global1 remain diagnostics. Do not multiply three primary claims
+across all arms, clients, cells and metrics.
 
 ### One arm registry
 
@@ -141,9 +145,10 @@ uncapped boot**. For FIFO this is the registry's FIFO control; for fair it is it
 fair control. The capped arm's own `vk-hog1` is an additional self-cost observation,
 not the mechanism reference. Historical m3 runs are not paired controls.
 
-### FIFO feasibility and variance pilot
+### Fair feasibility and variance pilot
 
-Start with **three independent off/bg1 boot pairs (six boots)**, not six
+Start with **three independent fair off/bg1-skip-cap boot pairs (six boots;
+`pilot.py plan --pair fair`, the default)**, not six
 confirmatory blocks. Counterbalance which arm boots first and record a seeded
 order before running. `trace/pilot.py plan --seed N --out PATH` prepares commands
 without executing them. It uses the existing m3 cells: idle, heavy Vulkan,
@@ -229,7 +234,8 @@ unchanged m3 historical control.
 
 ### Three statistical primary criteria and one safety prerequisite
 
-These are **proposed** engineering targets for the initial FIFO decision, to
+These are **proposed** engineering targets for the primary fair off versus
+bg1/skip-cap decision (originally written for FIFO; see the revision above), to
 review using feasibility/precision pilots before freezing. The unit of inference
 is the independent paired boot block. Average the prespecified run summaries
 within each session/cell first. A good p50 across clients cannot hide one losing

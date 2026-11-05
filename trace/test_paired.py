@@ -45,9 +45,12 @@ class PilotTest(unittest.TestCase):
         self.assertEqual(len(rows), 6)
         for block in range(1, 4):
             self.assertEqual({r['arm'] for r in rows if r['block'] == block},
-                             {'fifo/off/stock', 'fifo/bg1/stock'})
-        self.assertTrue(all(r['mechanism_reference'] == 'fifo/off/stock' for r in rows))
+                             {'fair/off/stock', 'fair/bg1/skip-cap'})
+        self.assertTrue(all(r['mechanism_reference'] == 'fair/off/stock' for r in rows))
         self.assertTrue(all('amdgpu.user_queue=0' in r['cmdline'] for r in rows))
+        fifo = pilot.plan(42, pair='fifo')
+        self.assertEqual({r['arm'] for r in fifo}, {'fifo/off/stock', 'fifo/bg1/stock'})
+        self.assertTrue(all(r['mechanism_reference'] == 'fifo/off/stock' for r in fifo))
 
     def test_pacing_modes_and_missing_feedback(self):
         def rows(values):

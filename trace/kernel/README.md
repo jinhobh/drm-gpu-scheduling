@@ -136,7 +136,7 @@ configured UKI. Renaming `pkgbase` does not complete UKI/boot setup.
 
 Before measurement: validate mixed-priority and two-hog invariants in real traces,
 error/cancellation/reset progress, three suspend/resume cycles and the 30-minute
-soak. Add the solo multi-job and aligned/offset two-victim cells, then run the FIFO feasibility/variance pilot before choosing and freezing the
+soak. Add the solo multi-job and aligned/offset two-victim cells, then run the fair (off vs bg1/skip-cap) feasibility/variance pilot before choosing and freezing the
 confirmatory block count. See the [experiment protocol](../reports/kernel-limit-protocol.md).
 No installed package, module, preset, UKI, loader entry or stock boot setting was
 changed during this implementation.

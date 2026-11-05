@@ -182,7 +182,20 @@ Update the **Status** and **Next** sections whenever a step finishes.
   records source hashes, recipients, archive hash/privacy scope and pending steps.
   No mail transport/connection is configured; no report sent or raw data publicly
   published. Finish delivery promptly when a sending path is available.
-- Phase 3: source audit and prototype code/tests implemented; phase 2 fitting and phase 4
+- **Test kernel built, installed beside stock and first-booted (2026-11-04).**
+  Six one-shot per-arm UKIs (`trace/kernel/boot/`); stock `arch-linux.efi` pinned
+  as default, stock boot hashes unchanged. Booted fifo/off, fifo/bg1 and
+  fair/bg1/skip-cap: no amdgpu timeout/reset/fault; cap invariants pass. One run
+  each ([pilot report](trace/reports/kernel-cap-first-boots.md)), kernel-side wait
+  until GPU start: **FIFO + cap does not help a NORMAL victim** (12.7 ms p50;
+  697/700 victim jobs waited behind one *older* queued hog job, as FIFO orders by
+  submit time) **but protects HIGH Hyprland** (3.7 vs ~10–13 ms). **Fair + cap
+  reproduces the cooperating-hog benefit** (victim 5.3 ms vs m3 vk-hog1 6.2–6.5 and
+  vk-hog 12–15; 297/300 victim jobs had no hog job ahead). Skip-cap skipped 2,436
+  times. Pilot evidence only: no soak/suspend/recovery, throughput or self-cost yet.
+  The FIFO off/bg1 primary contrast cannot show the NORMAL-victim benefit; the
+  protocol's primary contrast moves to fair off vs fair bg1/skip-cap.
+- Phase 3: prototype built, installed and first-booted; phase 2 fitting and phase 4
   hardware A/B not started.
 
 **Tooling (all in `trace/`, captures in `traces/`, gitignored):**
@@ -205,6 +218,7 @@ Update the **Status** and **Next** sections whenever a step finishes.
 | `fair_sleepers.py` | `python3 trace/fair_sleepers.py RUN...`: read-only check of frame-0 stalls, overtaking vkmark queue exhaustion, queued work at release, and nearest HIGH Hyprland submission; see `trace/reports/fair-sleepers.md` |
 | `admission.py` | `python3 trace/admission.py RUN...`: new bg1 captures only; joins dispatch/reservation IDs, validates observed occupancy/credits/priority/serials and trace loss, reports boundary reservations and scan costs; not a global1 or hardware recovery validator |
 | `kernel/` | pinned `linux-drmsched` recipe, admission/selection patch, baseline/patched source manifests and KUnit config; see `kernel/README.md`; production package/boot pending |
+| `start_wait.py` | `python3 trace/start_wait.py RUN... [--ahead]`: victim/Hyprland kernel wait until GPU start (sched+ring wait, from jobs.csv; no GPU timestamp correction); `--ahead` counts hog jobs dispatched ahead of each ready victim job and whether they were queued earlier |
 | `pilot.py`, `paired.py` | prepare FIFO pilot order/pacing classification; paired-block t/sign-flip summaries and pilot-only precision planning; no captures/sample count selected yet |
 | `share_fair.py` | build the allowlisted, input-hash-verified fair-report sharing archive without publishing/sending |
 | `compare.py` | `python3 trace/compare.py [LABEL=]MATRIX[,MATRIX]...`: after join.py, per hog × matrix: start latency f0/f1+ p50/p99, presented − intended, Hyprland ms/frame, hog fps and job time |
@@ -325,12 +339,15 @@ Root steps are for the user; give commands with absolute paths.
    upstream if delayed, and send; record the actual Message-ID/archive link.
    Do not claim the draft asset is already public or the report was sent.
 
-2. **Kernel FIFO pilot before fixing the block count.** Finish production
-   dependencies/config, compile/package the separately named kernel, prepare
-   its own boot entry and perform recovery/suspend/soak checks while preserving
-   stock/default boot. Follow the [protocol](trace/reports/kernel-limit-protocol.md)
-   and [arm registry](trace/kernel/arms.csv). Generate a recorded pilot order with
-   `trace/pilot.py plan`; run initial off/bg1 boot pairs outside confirmation.
+2. **Kernel pilot before fixing the block count; primary contrast is now fair.**
+   The kernel is built/installed and first-booted
+   ([pilot report](trace/reports/kernel-cap-first-boots.md)). Next: soak
+   `fair/bg1/skip-cap` (30 min mixed use, three suspend/resume cycles, then logs),
+   then a recovery check. Then pilot **fair/off vs fair/bg1/skip-cap** pairs
+   (FIFO off/bg1 remains a secondary compositor-protection contrast). Follow the
+   [protocol](trace/reports/kernel-limit-protocol.md) and
+   [arm registry](trace/kernel/arms.csv); `trace/pilot.py plan` still generates
+   FIFO pairs and must be switched to the fair arms before use.
    Check capped heavy-hog latency against **cap-off, same-policy `vk-hog1`** in
    the paired block, tiny-flood trace losses/event rate and between-boot variance.
    Add/pilot solo multi-job and two-victim cells plus throughput-only tiny flood

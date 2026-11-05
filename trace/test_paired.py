@@ -1,6 +1,7 @@
 import io
 import math
 import unittest
+import unittest.mock
 
 import paired
 import pilot
@@ -67,6 +68,27 @@ class PilotTest(unittest.TestCase):
             self.assertTrue(lines[-1].split()[2].endswith('-post'))
             orders.add(tuple(n.split(row['matrix'])[1] for n in names))
         self.assertGreater(len(orders), 1)  # sessions are shuffled independently
+
+    def test_status_points_at_first_unfinished_session(self):
+        import csv as _csv, tempfile
+        from pathlib import Path
+        rows = pilot.plan(3)
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'plan.csv'
+            with path.open('w', newline='') as f:
+                w = _csv.DictWriter(f, fieldnames=list(rows[0]))
+                w.writeheader()
+                w.writerows(rows)
+            with unittest.mock.patch.object(pilot, 'REPO', Path(d)):
+                logs = Path(d) / 'traces/pilot-sessions'
+                logs.mkdir(parents=True)
+                (logs / f"{rows[0]['matrix']}.done").write_text('x')
+                out = '\n'.join(pilot.status(path))
+        first_todo = rows[1]
+        entry = 'drmsched-' + first_todo['arm'].replace('/', '-') + '.efi'
+        self.assertIn(f"--boot-loader-entry={entry}", out)
+        self.assertIn(f"plan.csv {first_todo['block']} {first_todo['session']}", out)
+        self.assertEqual(out.count('to do'), len(rows) - 1)
 
     def test_pacing_modes_and_missing_feedback(self):
         def rows(values):

@@ -79,6 +79,38 @@ def plan(seed, blocks=3, pair='fair'):
     return rows
 
 
+def status(plan_path):
+    """Per-session state from traces/pilot-sessions markers, and what to do next."""
+    with plan_path.open(newline='') as stream:
+        rows = list(csv.DictReader(stream))
+    logs = REPO / 'traces/pilot-sessions'
+    lines, todo = [], None
+    for r in rows:
+        m = r['matrix']
+        if (logs / f'{m}.done').exists():
+            state = 'done'
+        elif (logs / f'{m}.incomplete').exists():
+            state = 'INCOMPLETE (ask before continuing)'
+        elif (logs / f'{m}.log').exists():
+            state = 'STARTED, not finished (ask before continuing)'
+        else:
+            state = 'to do'
+            todo = todo or r
+        lines.append(f"block {r['block']} session {r['session']}  {r['arm']:20} {state}")
+    if todo is None:
+        lines.append('All sessions have a result. Analyse before running anything else.')
+    else:
+        entry = 'drmsched-' + todo['arm'].replace('/', '-') + '.efi'
+        script = shlex.quote(str(REPO / 'trace/pilot_session.sh'))
+        plan_abs = shlex.quote(str(plan_path.resolve()))
+        lines += ['', f"Next: block {todo['block']} session {todo['session']} ({todo['arm']})",
+                  '  1. Save your work and unplug or disable DP-1.',
+                  f'  2. systemctl reboot --boot-loader-entry={entry}',
+                  f"  3. After logging in: sudo {script} {plan_abs} {todo['block']} {todo['session']}",
+                  '  4. Leave the laptop alone until it says "session complete", then reboot.']
+    return lines
+
+
 def pacing_mode(rows, refresh_ms):
     if not math.isfinite(refresh_ms) or refresh_ms <= 0:
         raise ValueError('positive finite measured refresh period required')
@@ -100,6 +132,8 @@ def main():
     p.add_argument('--blocks', type=int, default=3)
     p.add_argument('--pair', choices=PAIRS, default='fair')
     p.add_argument('--out', type=Path, required=True)
+    p = subs.add_parser('status')
+    p.add_argument('plan', type=Path)
     p = subs.add_parser('pacing')
     p.add_argument('csv', type=Path)
     p.add_argument('--refresh-ms', type=float, required=True)
@@ -112,6 +146,8 @@ def main():
             writer.writeheader()
             writer.writerows(rows)
         print(f'{len(rows)} boot/login sessions written to {args.out}; no commands executed')
+    elif args.command == 'status':
+        print('\n'.join(status(args.plan)))
     else:
         with args.csv.open() as stream:
             print(pacing_mode(list(csv.DictReader(stream)), args.refresh_ms))

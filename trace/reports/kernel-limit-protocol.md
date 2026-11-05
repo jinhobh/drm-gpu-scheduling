@@ -151,7 +151,11 @@ Start with **three independent fair off/bg1-skip-cap boot pairs (six boots;
 `pilot.py plan --pair fair`, the default)**, not six
 confirmatory blocks. Counterbalance which arm boots first and record a seeded
 order before running. `trace/pilot.py plan --seed N --out PATH` prepares commands
-without executing them. It uses the existing m3 cells: idle, heavy Vulkan,
+without executing them. **Recorded order:** [pilot-plan-fair.csv](pilot-plan-fair.csv),
+seed 20261104, generated 2026-11-04 before any pilot data. Each session runs via
+`sudo trace/pilot_session.sh PLAN BLOCK SESSION`, which first verifies the booted
+arm (command line and sysfs), eDP-1 as the only output, no GPU reset in the boot
+and an unused session name. It uses the existing m3 cells: idle, heavy Vulkan,
 cap-off `vk-hog1` reference and tiny-job flood, three run repetitions, DPM auto.
 It adds short no-hog pacing probes before/after each session matrix. Keep one
 active eDP-1 output, fixed geometry/userspace/options, no suspends during a

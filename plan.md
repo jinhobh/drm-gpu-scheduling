@@ -138,20 +138,31 @@ needs service-based ordering. It is not a new general mechanism.
      already benefits without the cap (6.8–16.1 ms uncapped vs 2.2–7.0 capped),
      while frames 1+ separate sharply (12.1–13.3 vs 4.7–4.9 ms). Any switch must
      be made and disclosed before freezing (protocol, primary criterion 1).
-3. **Fair pilot: 3 boot pairs, 6 boots (the user runs it, as root).**
+3. **Fair pilot: 3 boot pairs, 6 boots. Ready; the user runs it.**
+   - Fixed order: [pilot-plan-fair.csv](trace/reports/pilot-plan-fair.csv)
+     (seed 20261104, generated before any pilot data).
+   - **What to do next:**
+     `python3 /home/jinho/Projects/drm-gpu-scheduling/trace/pilot.py status /home/jinho/Projects/drm-gpu-scheduling/trace/reports/pilot-plan-fair.csv`.
+     It prints the next session, its one-shot boot command and its single
+     `sudo .../trace/pilot_session.sh PLAN BLOCK SESSION` command.
+   - `pilot_session.sh` refuses to start unless:
+     - the right arm is booted (command line and sysfs agree)
+     - eDP-1 is the only active output
+     - no GPU reset happened this boot
+     - the session is new
+   - It runs the ~19 captures (~20–25 min), logs to `traces/pilot-sessions/`,
+     continues past a failed capture, stops at a GPU reset, and marks the session
+     done or incomplete.
    - **Disconnect or disable DP-1 first.** Every first-boot capture had both
      displays active.
-   - Each session is about 19 root commands (~20 min). A small per-session runner
-     would avoid repeated sudo prompts; write it before starting.
-   - Generate the order with
-     `python3 /home/jinho/Projects/drm-gpu-scheduling/trace/pilot.py plan --seed N --out PATH`
-     (fair pair by default).
-   - Boot each arm one-shot and run its session commands.
-   - Check:
+   - After each session, the agent checks it with `admission.py` (capped arm), plus
+     `parse.py`/`join.py`, `start_wait.py --frame0`, `selfcost.py` and `throughput.py`.
+   - After all six, check:
      - the mechanism against the same-boot-pair cap-off `vk-hog1`
      - trace loss under the flood
-     - between-boot variance
+     - between-boot variance of the three primary measures
      - hog throughput cost and victim self-cost
+     - frame 0 vs frames 1+ (protocol, primary criterion 1)
      - **whether the cap changes fair's tiny-job-flood starvation (finding 3)**
 4. **Freeze the confirmatory design.** Use `trace/paired.py` for precision planning
    and fix the block count, order and endpoints. Then run the confirmatory blocks and
@@ -282,7 +293,7 @@ policy modelling.
 | `start_wait.py` | `python3 trace/start_wait.py RUN... [--ahead \| --frame0]`: victim/Hyprland kernel wait until GPU start (no GPU timestamp correction); `--ahead` counts hog jobs dispatched ahead of each ready victim job; `--frame0` prints the **primary measure** (frame-0 kernel wait per run) with the aligned app-measured cross-check and frames 1+ |
 | `admission.py` | `python3 trace/admission.py RUN...`: validates bg1 cap invariants (occupancy, serials, priority exemption, trace loss) and reports selection cost |
 | `burst_stats.py`, `compare.py` | per-frame-index latencies of one run; cross-matrix comparison after `join.py` |
-| `pilot.py`, `paired.py` | `pilot.py plan --seed N --out PATH [--pair fair\|fifo]` prepares a 6-boot pilot (never executes); `pilot.py pacing`; `paired.py` paired-block t intervals, sign-flip check and precision planning |
+| `pilot.py`, `pilot_session.sh`, `paired.py` | `pilot.py plan --seed N --out PATH [--pair fair\|fifo]` prepares a 6-boot pilot (never executes); `pilot.py status PLAN` shows progress and the next boot/run commands; root: `pilot_session.sh PLAN BLOCK SESSION` checks the boot and runs one session (`--check` without root); `pilot.py pacing`; `paired.py` paired-block t intervals, sign-flip check and precision planning |
 | `pacing.py`, `fair_sleepers.py` | compositor pacing vs vblanks; fair empty-pop starvation check |
 | `kernel/` | `linux-drmsched` recipe, `0001-gfx-admission.patch`, `0002-test-disable-user-queues.patch`, source manifests, `arms.csv`/`arms.py`, `boot/` presets; see `kernel/README.md` |
 | `workloads/real.py`, `video.sh` | real-app victim runner (GTK launch, Firefox scroll, compositor, mpv) and mpv tooling |

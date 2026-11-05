@@ -1,0 +1,41 @@
+{
+  "review_date": "2026-11-04",
+  "scope": "Upstream sources; not an attestation of the Arch capture binary. No hardware test performed.",
+  "stable": {
+    "repository": "https://github.com/gregkh/linux.git",
+    "tag": "v7.2.11",
+    "tag_object": "8316c24ec1b77dba19ba072ca4fe251b36dc65d3",
+    "commit": "a2de78ee6ed8bf8cd99d177c74865a6e8c3cb6ea",
+    "race_fix_already_present": "e89900c441fec90644baf49c3f46ce76d91c51e4",
+    "files": {
+      "drivers/gpu/drm/scheduler/sched_rq.c": "634142eb99ad9a0110cb1c2fcd5b3944a3548dd05422f19730c30939242480d6",
+      "drivers/gpu/drm/scheduler/sched_entity.c": "0d4a8d2a7090790fa5999f8b324570a3546cabefb6d5c5e56c87a0f92d2138e7",
+      "drivers/gpu/drm/scheduler/sched_main.c": "cb8d590121b21959b091f5b516e8d8774d89faeb6cc580d86bfdb52afcab8b2e",
+      "drivers/gpu/drm/amd/amdgpu/amdgpu_device.c": "f1bcaa703df662e21286fb1bc6d312ca6172a675d401004903b99d00e3e3083f",
+      "drivers/gpu/drm/amd/amdgpu/amdgpu_job.c": "ecdb1152c3a82f3207f0c649aa82dffa112b64d633675bdc13e0af1f58d32d32",
+      "drivers/gpu/drm/amd/amdgpu/amdgpu_ring.c": "a28a87b642de03b84925b5611bf9594f130e19c4cfe1b116f33815cc5f6017c7"
+    }
+  },
+  "mainline": {
+    "repository": "https://github.com/torvalds/linux.git",
+    "commit": "05441d697f7f9a927264f4058cbbc6a03dfcac9d",
+    "race_fix": "2ab510e63197360945f915dd5631a77c63ac6b27",
+    "sched_rq_identical_to_stable": true
+  },
+  "history_evidence": {
+    "stable": "https://api.github.com/repos/gregkh/linux/commits?sha=v7.2.11&path=drivers/gpu/drm/scheduler&per_page=50",
+    "mainline": "https://api.github.com/repos/torvalds/linux/commits?sha=05441d697f7f9a927264f4058cbbc6a03dfcac9d&path=drivers/gpu/drm/scheduler&per_page=100"
+  },
+  "drm_misc_next": {
+    "repository": "https://gitlab.freedesktop.org/drm/misc/kernel.git",
+    "branch": "drm-misc-next",
+    "checked_date": "2026-11-04",
+    "commit": "e32e83a6c5ec031a7f59d4794113d8484b220254",
+    "resolution": "Official branch API and git ls-remote agree",
+    "files": {
+      "drivers/gpu/drm/scheduler/sched_rq.c": "634142eb99ad9a0110cb1c2fcd5b3944a3548dd05422f19730c30939242480d6",
+      "drivers/gpu/drm/scheduler/sched_entity.c": "e6183847bb4bb2598fe70934113d2e9a25ec9d1c2e54620f792b0e695ad4ba2a"
+    },
+    "finding": "sched_rq.c identical to pinned stable; successor-only runtime conversion persists. No fresh hardware reproduction on this branch."
+  }
+}

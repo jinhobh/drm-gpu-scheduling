@@ -1,0 +1,109 @@
+stage,seed,block,session,arm,cmdline,matrix,mechanism_reference,commands
+pilot,20261104,1,1,fair/bg1/skip-cap,gpu_sched.sched_policy=2 amdgpu.sched_gfx_admission=1 amdgpu.sched_gfx_selection=1 amdgpu.user_queue=0,fair-pilot-b01-a1,fair/off/stock,"sudo /home/jinho/Projects/drm-gpu-scheduling/trace/dpm.sh auto
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a1-pre -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -i 300 -b 4
+sudo DPMS=auto REPS=3 HOGS=""none vk-hog vk-hog1 vkmark-cube"" /home/jinho/Projects/drm-gpu-scheduling/trace/matrix.sh fair-pilot-b01-a1
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a1-flood-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/flood.sh vkmark-cube 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a1-two-offset-j3-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a1-two-offset-j3-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a1-multi-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -b 20 -i 300 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a1-two-offset-j1-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a1-two-aligned-j3-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a1-flood-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/flood.sh vkmark-cube 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a1-two-aligned-j3-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a1-multi-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -b 20 -i 300 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a1-two-aligned-j3-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a1-flood-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/flood.sh vkmark-cube 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a1-two-offset-j3-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a1-multi-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -b 20 -i 300 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a1-two-aligned-j1-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a1-post -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -i 300 -b 4"
+pilot,20261104,1,2,fair/off/stock,gpu_sched.sched_policy=2 amdgpu.sched_gfx_admission=0 amdgpu.sched_gfx_selection=0 amdgpu.user_queue=0,fair-pilot-b01-a0,fair/off/stock,"sudo /home/jinho/Projects/drm-gpu-scheduling/trace/dpm.sh auto
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a0-pre -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -i 300 -b 4
+sudo DPMS=auto REPS=3 HOGS=""none vk-hog vk-hog1 vkmark-cube"" /home/jinho/Projects/drm-gpu-scheduling/trace/matrix.sh fair-pilot-b01-a0
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a0-flood-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/flood.sh vkmark-cube 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a0-multi-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -b 20 -i 300 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a0-flood-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/flood.sh vkmark-cube 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a0-multi-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -b 20 -i 300 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a0-flood-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/flood.sh vkmark-cube 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a0-two-offset-j1-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a0-two-offset-j3-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a0-two-offset-j3-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a0-two-aligned-j3-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a0-two-aligned-j3-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a0-two-offset-j3-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a0-multi-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -b 20 -i 300 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a0-two-aligned-j1-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a0-two-aligned-j3-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b01-a0-post -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -i 300 -b 4"
+pilot,20261104,2,1,fair/off/stock,gpu_sched.sched_policy=2 amdgpu.sched_gfx_admission=0 amdgpu.sched_gfx_selection=0 amdgpu.user_queue=0,fair-pilot-b02-a0,fair/off/stock,"sudo /home/jinho/Projects/drm-gpu-scheduling/trace/dpm.sh auto
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a0-pre -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -i 300 -b 4
+sudo DPMS=auto REPS=3 HOGS=""none vk-hog vk-hog1 vkmark-cube"" /home/jinho/Projects/drm-gpu-scheduling/trace/matrix.sh fair-pilot-b02-a0
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a0-two-aligned-j1-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a0-multi-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -b 20 -i 300 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a0-two-offset-j3-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a0-two-offset-j3-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a0-two-aligned-j3-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a0-two-aligned-j3-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a0-multi-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -b 20 -i 300 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a0-two-aligned-j3-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a0-two-offset-j3-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a0-two-offset-j1-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a0-multi-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -b 20 -i 300 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a0-flood-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/flood.sh vkmark-cube 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a0-flood-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/flood.sh vkmark-cube 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a0-flood-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/flood.sh vkmark-cube 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a0-post -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -i 300 -b 4"
+pilot,20261104,2,2,fair/bg1/skip-cap,gpu_sched.sched_policy=2 amdgpu.sched_gfx_admission=1 amdgpu.sched_gfx_selection=1 amdgpu.user_queue=0,fair-pilot-b02-a1,fair/off/stock,"sudo /home/jinho/Projects/drm-gpu-scheduling/trace/dpm.sh auto
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a1-pre -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -i 300 -b 4
+sudo DPMS=auto REPS=3 HOGS=""none vk-hog vk-hog1 vkmark-cube"" /home/jinho/Projects/drm-gpu-scheduling/trace/matrix.sh fair-pilot-b02-a1
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a1-two-aligned-j1-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a1-multi-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -b 20 -i 300 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a1-two-aligned-j3-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a1-multi-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -b 20 -i 300 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a1-flood-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/flood.sh vkmark-cube 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a1-two-aligned-j3-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a1-multi-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -b 20 -i 300 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a1-flood-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/flood.sh vkmark-cube 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a1-two-offset-j3-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a1-two-offset-j3-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a1-two-offset-j3-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a1-two-offset-j1-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a1-two-aligned-j3-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a1-flood-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/flood.sh vkmark-cube 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b02-a1-post -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -i 300 -b 4"
+pilot,20261104,3,1,fair/off/stock,gpu_sched.sched_policy=2 amdgpu.sched_gfx_admission=0 amdgpu.sched_gfx_selection=0 amdgpu.user_queue=0,fair-pilot-b03-a0,fair/off/stock,"sudo /home/jinho/Projects/drm-gpu-scheduling/trace/dpm.sh auto
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a0-pre -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -i 300 -b 4
+sudo DPMS=auto REPS=3 HOGS=""none vk-hog vk-hog1 vkmark-cube"" /home/jinho/Projects/drm-gpu-scheduling/trace/matrix.sh fair-pilot-b03-a0
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a0-two-aligned-j3-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a0-flood-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/flood.sh vkmark-cube 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a0-flood-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/flood.sh vkmark-cube 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a0-multi-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -b 20 -i 300 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a0-two-offset-j3-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a0-two-offset-j3-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a0-two-aligned-j3-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a0-two-offset-j1-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a0-two-aligned-j3-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a0-flood-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/flood.sh vkmark-cube 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a0-multi-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -b 20 -i 300 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a0-two-aligned-j1-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a0-multi-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -b 20 -i 300 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a0-two-offset-j3-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a0-post -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -i 300 -b 4"
+pilot,20261104,3,2,fair/bg1/skip-cap,gpu_sched.sched_policy=2 amdgpu.sched_gfx_admission=1 amdgpu.sched_gfx_selection=1 amdgpu.user_queue=0,fair-pilot-b03-a1,fair/off/stock,"sudo /home/jinho/Projects/drm-gpu-scheduling/trace/dpm.sh auto
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a1-pre -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -i 300 -b 4
+sudo DPMS=auto REPS=3 HOGS=""none vk-hog vk-hog1 vkmark-cube"" /home/jinho/Projects/drm-gpu-scheduling/trace/matrix.sh fair-pilot-b03-a1
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a1-flood-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/flood.sh vkmark-cube 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a1-two-aligned-j3-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a1-two-offset-j3-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a1-two-aligned-j1-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a1-two-offset-j3-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a1-two-aligned-j3-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a1-flood-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/flood.sh vkmark-cube 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a1-two-offset-j3-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a1-multi-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -b 20 -i 300 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a1-multi-r3 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -b 20 -i 300 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a1-flood-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/flood.sh vkmark-cube 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a1-two-offset-j1-r1 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh offset --iters 736 -n 10 -b 20
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a1-two-aligned-j3-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/two_victims.sh aligned --iters 736 -n 10 -b 20 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a1-multi-r2 -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -b 20 -i 300 --jobs 3
+sudo /home/jinho/Projects/drm-gpu-scheduling/trace/capture.sh fair-pilot-b03-a1-post -- /home/jinho/Projects/drm-gpu-scheduling/trace/workloads/burst.sh none --iters 736 -n 10 -i 300 -b 4"

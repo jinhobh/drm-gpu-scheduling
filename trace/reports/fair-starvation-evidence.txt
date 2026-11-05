@@ -1,0 +1,30 @@
+Command: python3 trace/fair_sleepers.py traces/m3-p2/auto-vkmark-cube-r*/*/
+Recomputed: 2026-11-04; existing 2026-10-19 captures, no new hardware run.
+
+traces/m3-p2/auto-vkmark-cube-r1/20261019-142821: 6/20 frame-0s >= 5 ms
+burst start_ms pops empty_after_pop queued_at_release next_push_us comp_queue_delta_ms
+    6   15.454  323             323                 0          164               0.102
+    7    5.515  108             108                 0           12              -6.868
+   10   15.292  328             328                 0          118               0.066
+   13   15.265  318             318                 0          186               0.120
+   14   15.290  317             317                 0          230               0.147
+   17    5.262  109             109                 0           23              -6.565
+traces/m3-p2/auto-vkmark-cube-r2/20261019-142843: 9/20 frame-0s >= 5 ms
+burst start_ms pops empty_after_pop queued_at_release next_push_us comp_queue_delta_ms
+    0   10.260  214             214                 0            5               4.586
+    3   15.092  308             308                 0          183               0.053
+    5    9.994  212             212                 0           10               5.328
+    7   15.388  325             325                 0          289               0.191
+    8    5.164  109             109                 1           28              -6.257
+    9   15.469  325             325                 0          164               0.089
+   10    9.418  199             199                 1           19               5.988
+   12   14.888  323             323                 1           23               0.864
+   13    6.556  134             134                 1           37              -7.823
+traces/m3-p2/auto-vkmark-cube-r3/20261019-142529: 6/20 frame-0s >= 5 ms
+burst start_ms pops empty_after_pop queued_at_release next_push_us comp_queue_delta_ms
+    3    8.534  178             178                 0            6               6.825
+    5    7.878  165             165                 1           20               7.771
+    7   15.394  323             323                 0          133               0.078
+    8   15.299  321             321                 0          125               0.076
+   10    7.237  151             151                 1           20               8.070
+   13   15.528  330             330                 0           99               0.048

@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>DRM scheduling scroll fixture</title>
+<style>
+body { margin: 0 auto; max-width: 900px; font: 22px/1.7 sans-serif; background: #eef2f6; color: #123; }
+article { background: white; padding: 32px; margin: 24px; border: 1px solid #abc; }
+</style>
+<h1>Local smooth-scroll workload</h1>
+<p>Fixed local content. Page Down and Page Up exercise Firefox's normal smooth scrolling.</p>
+<script>
+for (let i = 0; i < 160; i++) {
+  const article = document.createElement('article');
+  const heading = document.createElement('h2');
+  heading.textContent = `Section ${i + 1}`;
+  article.append(heading);
+  const p = document.createElement('p');
+  p.textContent = 'GPU scheduling study: text, layout, and browser scrolling. '.repeat(12);
+  article.append(p);
+  document.body.append(article);
+}
+</script>

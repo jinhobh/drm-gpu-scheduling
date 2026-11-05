@@ -1,6 +1,6 @@
-# Up to 70% less GPU wait while the GPU is busy
+# BORE-inspired GPU Scheduler for Linux Kernel
 
-**Snappier graphics on Linux:** a kernel scheduler change so apps and the desktop stay responsive while a game or another heavy program is using the GPU.
+**70% lower graphic latency** a kernel scheduler change so apps and the desktop stay responsive while a game or another heavy program is using the GPU.
 
 | Wait before the GPU starts a frame | Stock Linux 7.2 | This change | Improvement |
 |---|---:|---:|---:|

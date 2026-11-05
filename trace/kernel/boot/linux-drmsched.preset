@@ -1,0 +1,17 @@
+# Opt-in experiment UKIs, one per arm in ../arms.csv; same kernel and modules,
+# only the embedded command line differs. Stock linux.preset is untouched.
+ALL_kver="/boot/vmlinuz-linux-drmsched"
+PRESETS=('fifo_off_stock' 'fifo_bg1_stock' 'fair_off_stock' 'fair_bg1_stock' 'fair_bg1_skip_cap' 'fifo_global1_stock')
+
+fifo_off_stock_uki="/boot/EFI/Linux/drmsched-fifo-off-stock.efi"
+fifo_off_stock_options="--cmdline /etc/kernel/cmdline-drmsched-fifo-off-stock --splash /usr/share/systemd/bootctl/splash-arch.bmp"
+fifo_bg1_stock_uki="/boot/EFI/Linux/drmsched-fifo-bg1-stock.efi"
+fifo_bg1_stock_options="--cmdline /etc/kernel/cmdline-drmsched-fifo-bg1-stock --splash /usr/share/systemd/bootctl/splash-arch.bmp"
+fair_off_stock_uki="/boot/EFI/Linux/drmsched-fair-off-stock.efi"
+fair_off_stock_options="--cmdline /etc/kernel/cmdline-drmsched-fair-off-stock --splash /usr/share/systemd/bootctl/splash-arch.bmp"
+fair_bg1_stock_uki="/boot/EFI/Linux/drmsched-fair-bg1-stock.efi"
+fair_bg1_stock_options="--cmdline /etc/kernel/cmdline-drmsched-fair-bg1-stock --splash /usr/share/systemd/bootctl/splash-arch.bmp"
+fair_bg1_skip_cap_uki="/boot/EFI/Linux/drmsched-fair-bg1-skip-cap.efi"
+fair_bg1_skip_cap_options="--cmdline /etc/kernel/cmdline-drmsched-fair-bg1-skip-cap --splash /usr/share/systemd/bootctl/splash-arch.bmp"
+fifo_global1_stock_uki="/boot/EFI/Linux/drmsched-fifo-global1-stock.efi"
+fifo_global1_stock_options="--cmdline /etc/kernel/cmdline-drmsched-fifo-global1-stock --splash /usr/share/systemd/bootctl/splash-arch.bmp"

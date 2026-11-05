@@ -112,7 +112,12 @@ prepare() {
   make olddefconfig
   # Missing/incompatible toolchains can silently disable Rust and its drivers.
   # Review and pin any intended config change before building experiment arms.
-  if ! diff -u ../config.$CARCH .config; then
+  # Reviewed 2026-11-04: the only change is Arch rust 1.99.0-3 -> 1.99.1-1
+  # (patch release); every Rust option stays enabled. Any other toolchain fails.
+  sed -e 's/^CONFIG_RUSTC_VERSION=109900$/CONFIG_RUSTC_VERSION=109901/' \
+      -e 's/^CONFIG_RUSTC_VERSION_TEXT="rustc 1\.99\.0 (b940084d7 2026-09-28) (Arch Linux rust 1:1\.99\.0-3)"$/CONFIG_RUSTC_VERSION_TEXT="rustc 1.99.1 (58cf8f9c3 2026-10-13) (Arch Linux rust 1:1.99.1-1)"/' \
+      ../config.$CARCH > ../config.expected
+  if ! diff -u ../config.expected .config; then
     error "Config changed; review the toolchain/config before building"
     return 1
   fi
@@ -125,7 +130,7 @@ prepare() {
   {
     echo "kernel_release=$(<version)"
     echo "base=v7.2.11-arch1 (64a90897d3c539033f24105968e3513957e70819)"
-    sha256sum .config ../config.$CARCH ../0001-gfx-admission.patch \
+    sha256sum .config ../config.$CARCH ../config.expected ../0001-gfx-admission.patch \
       ../audited-files.sha256 ../scheduler-files.sha256 ../patched-files.sha256 \
       ../0002-test-disable-user-queues.patch
   } > drmsched-build.txt

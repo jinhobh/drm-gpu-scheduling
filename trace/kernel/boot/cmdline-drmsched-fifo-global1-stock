@@ -1,0 +1,1 @@
+root=PARTUUID=6dbdc7ed-d0ba-4bb8-8bfd-b3197bbc749f zswap.enabled=0 rw rootfstype=ext4 gpu_sched.sched_policy=1 amdgpu.sched_gfx_admission=2 amdgpu.sched_gfx_selection=0 amdgpu.user_queue=0
